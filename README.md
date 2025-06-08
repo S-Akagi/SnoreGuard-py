@@ -9,8 +9,15 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/S-Akagi/SnoreGuard-py/releases"><img src="https://img.shields.io/github/v/release/S-Akagi/SnoreGuard-py?style=for-the-badge" alt="GitHub release"></a>
-  <a href="https://github.com/S-Akagi/SnoreGuard-py/blob/main/LICENSE"><img src="https://img.shields.io/github/license/S-Akagi/SnoreGuard-py?style=for-the-badge" alt="License"></a>
+  <a href="https://github.com/S-Akagi/SnoreGuard-py/releases">
+    <img src="https://img.shields.io/badge/version-v1.0.0-blue?logo=github" alt="GitHub release">
+  </a>
+  <a href="https://github.com/S-Akagi/SnoreGuard-py/blob/main/LICENSE">
+    <img src="http://img.shields.io/badge/license-MIT-blue.svg?style=flat" alt="License">
+  </a>
+  <a href="https://github.com/S-Akagi/SnoreGuard-py/actions/workflows/CI.yml">
+    <img src="https://github.com/S-Akagi/SnoreGuard-py/actions/workflows/CI.yml/badge.svg" alt="CI Status">
+  </a>
 </p>
 
 **SnoreGuard**は、マイク入力からリアルタイムでいびきを検出し、VRChat内で自動でミュートするWindows向けデスクトップアプリケーションです。
