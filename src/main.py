@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 import logging
 import customtkinter as ctk
 import time
@@ -11,7 +12,13 @@ logger = logging.getLogger(__name__)
 
 
 def prepare_app_data(status_callback):
-    """アプリケーションデータを準備（UIは作成しない）"""
+    """
+    アプリケーションの初期化処理を実行
+    - 音声分析エンジンのプリコンパイル
+    - 設定ファイルの読み込み
+    - 時間のかかる初期化処理を段階的に実行
+    - スプラッシュ画面に進捗を表示
+    """
     try:
         # 段階的初期化
         status_callback("システム初期化中...")
@@ -40,7 +47,14 @@ def prepare_app_data(status_callback):
 
 
 def create_and_run_main_app():
-    """メインアプリケーションを作成して実行"""
+    """
+    メインアプリケーションウィンドウを作成して実行
+    - CustomTkinterを使用してメインウィンドウを作成
+    - SnoreGuardアプリケーションを初期化
+    - UIを表示
+    - ウィンドウの位置やサイズを適切に設定
+    - 確実に前面に表示されるよう制御
+    """
     try:
         # 新しいTkインスタンスでメインウィンドウを作成
         root = ctk.CTk()
@@ -78,13 +92,19 @@ def create_and_run_main_app():
 
 
 def main():
+    """
+    アプリケーションのメインエントリーポイント。
+    - スプラッシュ画面の表示
+    - バックグラウンドでの初期化処理
+    - 初期化完了後にメインアプリケーションウィンドウを表示
+    """
     splash = QuickSplashScreen()
 
     # 初期化完了フラグ
     initialization_complete = False
 
     def end_splash_and_show_main():
-        """スプラッシュを終了してメインアプリを準備"""
+        """スプラッシュ画面を終了してメインアプリ準備"""
         nonlocal initialization_complete
         if not initialization_complete:
             return
@@ -92,14 +112,14 @@ def main():
         splash.splash_root.quit()
 
     def on_initialization_complete():
-        """初期化完了時のコールバック"""
+        """初期化完了時に呼び出されるコールバック関数"""
         nonlocal initialization_complete
         initialization_complete = True
         # スプラッシュのメインループ内で終了をスケジュール
         splash.splash_root.after(300, end_splash_and_show_main)
 
     def initialization_task(status_callback):
-        """バックグラウンド初期化タスク"""
+        """バックグラウンドで実行される初期化処理"""
         try:
             prepare_app_data(status_callback)
         except Exception as e:

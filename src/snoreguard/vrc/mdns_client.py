@@ -8,10 +8,21 @@ from typing import Dict, List, Optional, Callable
 logger = logging.getLogger(__name__)
 
 
-# mDNSレコードを表現するクラス
 class MDNSRecord:
-    # 初期化
+    """
+    mDNSレコードを表現するデータクラス
+    - DNSレコードの基本情報（名前、タイプ、クラス、TTL、データ）を保持
+    """
+
     def __init__(self, name: str, rtype: int, rclass: int, ttl: int, data: bytes):
+        """
+        mDNSレコードを初期化
+        - name: ドメイン名
+        - rtype: レコードタイプ（A、PTR、TXT、SRVなど）
+        - rclass: レコードクラス
+        - ttl: 生存時間（秒）
+        - data: レコードデータ（バイナリ）
+        """
         self.name = name
         self.rtype = rtype
         self.rclass = rclass
@@ -19,28 +30,41 @@ class MDNSRecord:
         self.data = data
 
 
-# 軽量mDNSクライアント実装
 class MDNSClient:
-    MDNS_PORT = 5353  # mDNSポート
-    MDNS_GROUP = "224.0.0.251"  # mDNSグループ
+    """
+    mDNS（Multicast DNS）プロトコルのクライアント実装
+    - ローカルネットワーク上のサービスを探索し、VRChatのOSCQueryサービスを
+    - 自動的に発見するために使用。RFC 6762のmDNS仕様に基づく
+    """
 
-    # DNSレコードタイプ
-    TYPE_A = 1  # Aレコード
-    TYPE_PTR = 12  # PTRレコード
-    TYPE_TXT = 16  # TXTレコード
-    TYPE_SRV = 33  # SRVレコード
+    # mDNSプロトコルの標準設定
+    MDNS_PORT = 5353  # mDNS標準ポート
+    MDNS_GROUP = "224.0.0.251"  # IPv4 mDNSマルチキャストアドレス
 
-    # 初期化
+    # DNSレコードタイプ定数（RFC 1035）
+    TYPE_A = 1  # IPv4アドレスレコード
+    TYPE_PTR = 12  # ポインターレコード（サービス探索用）
+    TYPE_TXT = 16  # テキストレコード（サービスメタデータ）
+    TYPE_SRV = 33  # サービスレコード（ホストとポート情報）
+
     def __init__(self, service_callback: Optional[Callable] = None):
+        """
+        mDNSクライアントを初期化
+        - service_callback: サービス発見時のコールバック関数
+        """
         logger.debug("MDNSClient初期化")
-        self.socket = None  # ソケット
-        self.running = False  # 実行中フラグ
-        self.thread = None  # スレッド
-        self.service_callback = service_callback  # サービスコールバック
-        self.discovered_services: Dict[str, Dict] = {}  # 発見したサービス
+        self.socket = None
+        self.running = False
+        self.thread = None
+        self.service_callback = service_callback
+        self.discovered_services: Dict[str, Dict] = {}  # 発見したサービスのキャッシュ
 
-    # mDNS受信を開始
     def start(self):
+        """
+        mDNSマルチキャスト受信を開始
+        - UDPソケットを作成し、mDNSマルチキャストグループに参加
+        - 別スレッドで受信ループを開始し、ネットワーク上のサービス広告を監視
+        """
         logger.debug("mDNSクライアント開始")
         if self.running:
             logger.debug("mDNSクライアント既に実行中")
@@ -50,15 +74,15 @@ class MDNSClient:
             self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 
-            # Windowsでの互換性のためにSO_REUSEPORTは条件付きで設定
+            # ポート再利用設定（Windowsでは未サポートのため条件付き）
             try:
                 self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
             except AttributeError:
-                pass  # WindowsではSO_REUSEPORTが利用できない
+                pass  # Windowsではスキップ
 
             self.socket.bind(("", self.MDNS_PORT))
 
-            # マルチキャストグループに参加
+            # IPv4 mDNSマルチキャストグループに参加
             mreq = struct.pack(
                 "4sl", socket.inet_aton(self.MDNS_GROUP), socket.INADDR_ANY
             )
@@ -73,13 +97,16 @@ class MDNSClient:
             logger.error(f"mDNS開始エラー: {e}", exc_info=True)
             raise Exception(f"mDNS開始エラー: {e}")
 
-    # mDNS受信を停止
     def stop(self):
+        """
+        mDNS受信を停止し、リソースをクリーンアップ
+        - マルチキャストグループから脱退し、ソケットを閉じ、スレッドの終了を待機
+        """
         logger.debug("mDNSクライアント停止")
         self.running = False
         if self.socket:
             try:
-                # マルチキャストグループから脱退
+                # マルチキャストグループから正常に脱退
                 mreq = struct.pack(
                     "4sl", socket.inet_aton(self.MDNS_GROUP), socket.INADDR_ANY
                 )
@@ -95,8 +122,11 @@ class MDNSClient:
                 logger.warning("mDNSスレッドが正常に終了しませんでした")
         logger.info("mDNSクライアント停止完了")
 
-    # 特定のサービスタイプをクエリ
     def query_service(self, service_type: str):
+        """
+        指定されたサービスタイプのmDNSクエリを送信
+        - service_type: 検索するサービスタイプ（例：_oscjson._tcp.local.）
+        """
         if not self.socket:
             return
 
@@ -106,8 +136,12 @@ class MDNSClient:
         except Exception:
             pass  # クエリ送信エラーは無視
 
-    # mDNSパケット受信ループ
     def _listen_loop(self):
+        """
+        mDNSパケットの連続受信ループ（別スレッドで実行）
+        - マルチキャストグループからパケットを受信し、
+        - パースしてサービス情報
+        """
         while self.running:
             try:
                 data, addr = self.socket.recvfrom(4096)
@@ -118,8 +152,8 @@ class MDNSClient:
                 if self.running:
                     time.sleep(0.1)
 
-    # mDNSクエリパケットを構築
     def _build_query(self, service_type: str) -> bytes:
+        """mDNSクエリパケットを構築"""
         # DNS Header
         header = struct.pack("!HHHHHH", 0, 0, 1, 0, 0, 0)  # ID=0, QR=0, OPCODE=0, etc.
 
@@ -129,8 +163,8 @@ class MDNSClient:
 
         return header + question
 
-    # DNS名前形式にエンコード
     def _encode_name(self, name: str) -> bytes:
+        """DNS名前形式にエンコード"""
         result = b""
         for part in name.split("."):
             if part:
@@ -138,8 +172,8 @@ class MDNSClient:
         result += b"\x00"  # 終端
         return result
 
-    # mDNS応答パケットを解析
     def _parse_mdns_response(self, data: bytes, src_ip: str):
+        """mDNS応答パケットを解析"""
         try:
             if len(data) < 12:
                 return
@@ -176,12 +210,13 @@ class MDNSClient:
         except Exception:
             pass  # パケット解析エラーは無視
 
-    # DNS名前を解析
     def _parse_name(self, data: bytes, offset: int) -> tuple[str, int]:
+        """DNS名前を解析"""
         parts = []
         original_offset = offset
         jumped = False
 
+        # 名前を解析
         while offset < len(data):
             length = data[offset]
 
@@ -205,14 +240,15 @@ class MDNSClient:
 
         return ".".join(parts), original_offset if jumped else offset
 
-    # リソースレコードを解析
     def _parse_resource_record(
         self, data: bytes, offset: int
     ) -> tuple[Optional[MDNSRecord], int]:
+        """リソースレコードを解析"""
         try:
             name, offset = self._parse_name(data, offset)
 
             if offset + 10 > len(data):
+                # レコードデータの長さを超えている場合は無視
                 return None, offset
 
             rtype, rclass, ttl, rdlen = struct.unpack(
@@ -221,6 +257,7 @@ class MDNSClient:
             offset += 10
 
             if offset + rdlen > len(data):
+                # レコードデータの長さを超えている場合は無視
                 return None, offset
 
             rdata = data[offset : offset + rdlen]
@@ -231,20 +268,26 @@ class MDNSClient:
         except Exception:
             return None, offset
 
-    # サービスレコードを処理してOSCQueryサービスを特定
     def _process_service_records(self, records: List[MDNSRecord], src_ip: str):
+        """
+        受信したmDNSレコードからOSCQueryサービスを特定して抽出する。
+        - PTRレコードからサービス名、SRVレコードからポート、
+        - TXTレコードからOSCポートを取得し、完全なサービス情報を組み立てる。
+        - records: 処理対象のmDNSレコードリスト
+        - src_ip: レコードの送信元IPアドレス
+        """
         oscquery_services = {}
 
-        # PTRレコードからサービス名を取得
+        # 段階1: PTRレコードからOSCQueryサービスのインスタンス名を収集
         for record in records:
             if record.rtype == self.TYPE_PTR and "_oscjson._tcp.local" in record.name:
                 try:
                     service_name, _ = self._parse_name(record.data, 0)
                     oscquery_services[service_name] = {"name": service_name}
                 except Exception:
-                    continue
+                    continue  # パースエラーは無視
 
-        # SRVレコードからポート情報を取得
+        # 段階2: SRVレコードからサービスのホストとポート情報を収集
         for record in records:
             if record.rtype == self.TYPE_SRV:
                 service_name = record.name
@@ -258,7 +301,7 @@ class MDNSClient:
                     except Exception:
                         continue
 
-        # TXTレコードからOSCポート情報を取得
+        # 段階3: TXTレコードからOSCポートなどのメタデータを収集
         for record in records:
             if record.rtype == self.TYPE_TXT:
                 service_name = record.name
@@ -272,11 +315,11 @@ class MDNSClient:
                     except Exception:
                         continue
 
-        # 完全な情報を持つサービスを通知
+        # 段階4: 必要な情報が揃ったサービスをコールバックで通知
         for service_name, service_info in oscquery_services.items():
             if (
-                "osc_port" in service_info
-                and service_name not in self.discovered_services
+                "osc_port" in service_info  # OSCポート情報が必須
+                and service_name not in self.discovered_services  # 新規発見のみ
             ):
                 self.discovered_services[service_name] = service_info
                 if self.service_callback:
@@ -287,7 +330,7 @@ class MDNSClient:
                     self.service_callback(callback_info)
 
     def _parse_txt_record(self, data: bytes) -> Dict[str, str]:
-        # TXTレコードを解析
+        """TXTレコードを解析"""
         result = {}
         offset = 0
 
@@ -302,51 +345,80 @@ class MDNSClient:
             if offset + length > len(data):
                 break
 
+            # TXTレコードを解析
             txt_string = data[offset : offset + length].decode("ascii", errors="ignore")
             if "=" in txt_string:
                 key, value = txt_string.split("=", 1)
                 result[key] = value
 
+            # 次のTXTレコードの位置に移動
             offset += length
 
         return result
 
 
 class OSCQueryServiceFinder:
-    # OSCQueryサービス自動発見クラス
+    """
+    OSCQueryサービスの自動発見を行うメインクラス。
+    - mDNSクライアントを使用してVRChatのOSCQueryサービスを探索し、
+    - 定期的なクエリ送信でサービスの可用性を監視する。
+    """
+
     def __init__(self, discovery_callback=None, log_callback=None):
+        """
+        OSCQueryServiceFinderを初期化
+        - discovery_callback: サービス発見時のコールバック関数
+        - log_callback: ログ出力用コールバック関数
+        """
         logger.debug("OSCQueryServiceFinder初期化")
         self.discovery_callback = discovery_callback
         self.log_callback = log_callback
         self.mdns_client = MDNSClient(self._on_service_discovered)
-        self.query_timer = None
+        self.query_timer = None  # 定期クエリ用タイマー
 
-    # サービス発見を開始
     def start(self):
+        """
+        OSCQueryサービスの自動発見を開始
+        - mDNSクライアントを起動し、定期的なサービスクエリを開始
+        """
         try:
-            self.mdns_client.start()
-            self._start_periodic_query()
+            self.mdns_client.start()  # mDNSクライアントを開始
+            self._start_periodic_query()  # 定期的なクエリ送信を開始
             if self.log_callback:
-                self.log_callback("OSCQuery自動発見を開始 🔍", "osc")
+                self.log_callback("OSCQuery自動発見を開始", "osc")
         except Exception as e:
             if self.log_callback:
                 self.log_callback(f"OSCQuery発見開始エラー: {e}", "error")
 
-    # サービス発見を停止
     def stop(self):
+        """
+        OSCQueryサービスの自動発見を停止
+        - 定期タイマーをキャンセルし、mDNSクライアントを停止
+        """
         if self.query_timer:
             self.query_timer.cancel()
-        self.mdns_client.stop()
+        self.mdns_client.stop()  # mDNSクライアントを停止
 
-    # 定期的なクエリ送信を開始
     def _start_periodic_query(self):
+        """
+        OSCQueryサービスの定期クエリを開始
+        - 5秒間隔で_oscjson._tcp.local.サービスへのクエリを送信
+        - 再帰的にタイマーを設定して継続的に実行
+        """
+        # OSCQueryサービスタイプへのクエリを送信
         self.mdns_client.query_service("_oscjson._tcp.local.")
+
+        # 5秒後の次回クエリをスケジュール
         self.query_timer = threading.Timer(5.0, self._start_periodic_query)
-        self.query_timer.daemon = True
+        self.query_timer.daemon = True  # メインスレッド終了時に自動終了
         self.query_timer.start()
 
-    # サービス発見時のコールバック
     def _on_service_discovered(self, service_info):
+        """
+        mDNSでサービスが発見された時の内部コールバック
+        - 発見したサービス情報をログ出力し、上位のコールバックへ通知
+        - service_info: 発見したサービスの情報
+        """
         if self.log_callback:
             ip = (
                 service_info["ip_addresses"][0]
@@ -354,7 +426,8 @@ class OSCQueryServiceFinder:
                 else "N/A"
             )
             port = service_info.get("osc_port", "N/A")
-            self.log_callback(f"OSCQuery発見: {ip}:{port} 🔍", "osc")
+            self.log_callback(f"OSCQuery発見: {ip}:{port}", "osc")
 
+        # 上位レイヤーのコールバックにサービス情報を渡す
         if self.discovery_callback:
             self.discovery_callback(service_info)

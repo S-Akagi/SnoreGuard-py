@@ -18,6 +18,28 @@ from snoreguard.audio_service import AudioService
 from snoreguard.settings_manager import SettingsManager
 from snoreguard.vrc.handler import VRCHandler
 
+
+class ThreadSafeHandler:
+    """スレッドセーフな処理を統一管理"""
+
+    @staticmethod
+    def safe_after(root, func, *args, **kwargs):
+        """メインループが開始前の場合を考慮した安全なafter呼び出し"""
+        try:
+            return root.after(0, func, *args, **kwargs)
+        except RuntimeError as e:
+            if "main thread is not in main loop" in str(e):
+                logger.debug(f"メインループ開始前のためスキップ: {func.__name__}")
+                return None
+            else:
+                raise
+
+    @staticmethod
+    def safe_log(root, add_log_func, message: str, level: str = "info"):
+        """スレッドセーフなログ追加"""
+        ThreadSafeHandler.safe_after(root, add_log_func, message, level)
+
+
 SETTINGS_FILE = "snore_guard_settings.json"
 UPDATE_INTERVAL_MS = 100
 
@@ -94,8 +116,8 @@ class SnoreGuardApp:
         self.root.protocol("WM_DELETE_WINDOW", self._on_closing)
         logger.debug("SnoreGuardApp初期化完了")
 
-    # 変数初期化
     def _init_tk_variables(self):
+        """アプリ内で使用するTkinter変数を初期化"""
         self.mic_var = tk.StringVar()
         self.notification_var = tk.BooleanVar()
         self.auto_mute_var = tk.BooleanVar()
@@ -104,8 +126,8 @@ class SnoreGuardApp:
         self.rule_setting_vars = {}
         self.detailed_status_vars = {}
 
-    # デフォルト設定
     def _get_default_settings(self) -> dict:
+        """アプリのデフォルト設定値を返す"""
         return {
             "mic_device_name": "",
             "audio_notification_enabled": True,
@@ -113,15 +135,15 @@ class SnoreGuardApp:
             "rule_settings": asdict(RuleSettings()),
         }
 
-    # 検出開始/停止
     def toggle_detection(self):
+        """いびき検出の開始/停止をトグル"""
         if self.is_running:
             self._stop_detection()  # 検出停止
         else:
             self._start_detection()  # 検出開始
 
-    # 検出開始
     def _start_detection(self):
+        """選択されたマイクで音声検出を開始"""
         logger.debug("検出開始処理開始")
 
         if self.is_initializing:
@@ -142,8 +164,8 @@ class SnoreGuardApp:
         # 非同期で初期化を実行
         self._start_detection_async(selected_mic_name, device_id)
 
-    # 非同期で検出を開始する
     def _start_detection_async(self, selected_mic_name: str, device_id: int):
+        """バックグラウンドで音声システムを非同期初期化"""
         self.is_initializing = True
         self.initialization_progress = 0
 
@@ -163,8 +185,8 @@ class SnoreGuardApp:
         )
         init_thread.start()
 
-    # 音声システムを初期化
     def _initialize_audio_system(self, selected_mic_name: str, device_id: int):
+        """オーディオデバイスと分析エンジンを初期化"""
         try:
             logger.info(
                 f"音声システム初期化開始: {selected_mic_name} (device_id: {device_id})"
@@ -177,7 +199,7 @@ class SnoreGuardApp:
 
             # 音声デバイスを準備
             self._update_progress(20, "音声デバイスを準備中")
-            # デバイスの事前テスト
+            # デバイスの事前テスト（未使用でないか確認）
             try:
                 test_stream = sd.InputStream(
                     samplerate=16000,
@@ -212,16 +234,19 @@ class SnoreGuardApp:
             logger.error(f"音声システム初期化エラー: {e}", exc_info=True)
             self.root.after(0, self._handle_initialization_error, str(e))
 
-    # プログレス更新
     def _update_progress(self, progress: int, message: str):
+        """プログレス更新"""
         self.initialization_progress = progress
-        self.root.after(
-            0, lambda: self.status_label_var.set(f"🔄 {message} ({progress}%)")
-        )
-        self.root.after(0, lambda: self.add_log(f"{message} ({progress}%)", "system"))
+        status_message = f"⏳ {message} ({progress}%)"
+        log_message = f"{message} ({progress}%)"
 
-    # 検出開始の最終化
+        ThreadSafeHandler.safe_after(
+            self.root, self.status_label_var.set, status_message
+        )
+        ThreadSafeHandler.safe_after(self.root, self.add_log, log_message, "system")
+
     def _finalize_detection_start(self, selected_mic_name: str):
+        """初期化完了後のUI状態更新とビジュアル開始"""
         self.is_running = True
         self.is_initializing = False
         self._update_control_state()
@@ -232,8 +257,8 @@ class SnoreGuardApp:
         # ビジュアル更新
         self.root.after(UPDATE_INTERVAL_MS, self._update_visuals)
 
-    # 初期化エラー処理
     def _handle_initialization_error(self, error_message: str):
+        """初期化失敗時のUIリセットとエラー表示"""
         self.is_initializing = False
         self.is_running = False
         self._update_control_state()
@@ -243,44 +268,36 @@ class SnoreGuardApp:
             "初期化エラー", f"音声システムの初期化に失敗しました:\n{error_message}"
         )
 
-    # プログレスアニメーション
     def _start_progress_animation(self):
+        """プログレスアニメーション開始"""
         self._animate_progress()
 
-    # プログレスアニメーション
     def _animate_progress(self):
-        if self.is_initializing:
-            spinner_chars = ["🔄", "🔃", "🔁", "🔀"]
-            char_index = int(time.time() * 4) % len(spinner_chars)
-            current_status = self.status_label_var.get()
-            if (
-                "🔄" in current_status
-                or "🔃" in current_status
-                or "🔁" in current_status
-                or "🔀" in current_status
-            ):
-                # スピナー文字を更新
-                updated_status = current_status
-                for char in spinner_chars:
-                    updated_status = updated_status.replace(
-                        char, spinner_chars[char_index]
-                    )
-                self.status_label_var.set(updated_status)
+        """プログレスアニメーション"""
+        if not self.is_initializing:
+            return
 
-            # 200ms後に再度実行
-            self.root.after(200, self._animate_progress)
+        current_status = self.status_label_var.get()
+        if "⏳" in current_status:
+            # シンプルなドットアニメーション
+            dot_count = (int(time.time() * 2) % 3) + 1
+            dots = "." * dot_count + " " * (3 - dot_count)
+            updated_status = current_status.replace("⏳", f"⏳{dots}")
+            self.status_label_var.set(updated_status)
+
+        # 200ms後に再度実行
+        self.root.after(200, self._animate_progress)
 
     # 初期化中のUI状態更新
     def _update_control_state_initializing(self):
-        """初期化中のUI状態更新"""
         self.start_button.configure(state="disabled", text="初期化中...")
         self.stop_button.configure(state="disabled")
         self.mic_combobox.configure(state="disabled")
         for _, _, scale in self.rule_setting_vars.values():
             scale.configure(state="disabled")
 
-    # 検出停止
     def _stop_detection(self):
+        """音声検出を停止してシステムをリセット"""
         logger.debug("検出停止処理開始")
 
         if self.is_initializing:
@@ -320,17 +337,17 @@ class SnoreGuardApp:
         self.add_log("検出を停止しました。", "system")
         logger.info("音声検出停止完了")
 
-    # 検出停止のUI状態更新
     def _update_control_state(self):
+        """システム状態に応じたUIコントロール状態を更新"""
         if self.is_initializing:
-            # 初期化中の状態
+            # 初期化中: 全コントロールを無効化
             self.start_button.configure(state="disabled", text="初期化中...")
             self.stop_button.configure(state="disabled")
             self.mic_combobox.configure(state="disabled")
             for _, _, scale in self.rule_setting_vars.values():
                 scale.configure(state="disabled")
         else:
-            # 通常の状態
+            # 通常状態: 実行中かどうかで制御
             state = "normal" if not self.is_running else "disabled"
             self.start_button.configure(
                 state="disabled" if self.is_running else "normal", text="検出開始"
@@ -342,13 +359,13 @@ class SnoreGuardApp:
             for _, _, scale in self.rule_setting_vars.values():
                 scale.configure(state=state)
 
-    # ビジュアル更新
     def _update_visuals(self):
+        """リアルタイムで音声データと統計をビジュアル更新"""
         if not self.is_running:
             logger.debug("ビジュアル更新をスキップ: 検出停止中")
             return
         try:
-            # 周期タイマーが設定されている場合
+            # イベント検出後の周期性タイマー処理
             if self.periodicity_timer_start_time:
                 elapsed = (
                     datetime.now() - self.periodicity_timer_start_time
@@ -371,7 +388,7 @@ class SnoreGuardApp:
                 except (AttributeError, NameError):
                     pass
 
-            # データキューが空でない場合
+            # 新しい音声データがある場合の処理
             updated = False
             while not self.data_queue.empty():
                 updated = True
@@ -395,8 +412,8 @@ class SnoreGuardApp:
         finally:
             self.root.after(UPDATE_INTERVAL_MS, self._update_visuals)
 
-    # 分析データ処理
     def _process_analysis_data(self, res: dict):
+        """分析データ処理"""
         self.display_mask = res.get("final_mask_frames", np.zeros(1, dtype=bool))
         pass_masks = res.get("pass_masks")
         try:
@@ -415,8 +432,8 @@ class SnoreGuardApp:
             pass
         self._update_detailed_status(res)
 
-    # プロット更新
     def _draw_plots(self):
+        """プロット更新"""
         self.waveform_line.set_ydata(self.display_buffer)
         self.waveform_fill.remove()
         mask_len = min(len(self.waveform_x), len(self.display_mask))
@@ -431,19 +448,12 @@ class SnoreGuardApp:
         )
         self.plot_canvas.draw_idle()
 
-    # いびき検出コールバック
     def on_snore_detected_callback(self):
-        try:
-            self.root.after(0, self._handle_detection_event)
-        except RuntimeError as e:
-            if "main thread is not in main loop" in str(e):
-                # メインループが開始前の場合は無視
-                logger.debug("いびき検出コールバックをスキップ: メインループ開始前")
-            else:
-                raise
+        """いびき検出コールバック"""
+        ThreadSafeHandler.safe_after(self.root, self._handle_detection_event)
 
-    # いびき検出イベント処理
     def _handle_detection_event(self):
+        """いびき検出イベント処理"""
         if not self.is_running:
             logger.debug("検出イベントをスキップ: システム停止中")
             return
@@ -458,8 +468,8 @@ class SnoreGuardApp:
             2000, lambda: self.is_running and self.status_label_var.set("🔊 検出中...")
         )
 
-    # VRChatミュート処理
     def _trigger_vrchat_mute(self):
+        """VRChatミュート処理"""
         logger.debug(f"VRChatミュート処理開始: 現在状態={self.is_vrchat_muted}")
         if self.is_vrchat_muted is False:
             self.add_log("VRChatマイクをミュートします。", "osc")
@@ -481,31 +491,26 @@ class SnoreGuardApp:
             else:
                 self.add_log("ミュート状態の同期待機中です。", "osc")
 
-    # ルール設定変更
     def _on_rule_setting_change(
         self, name: str, value_str: str, label_var: tk.StringVar, is_int: bool
     ):
+        """ルール設定変更"""
         value = round(float(value_str)) if is_int else float(value_str)
         label_var.set(f"{value}" if is_int else f"{value:.3f}")
         setattr(self.rule_settings, name, value)
 
-    # ルール設定UI更新
     def _update_rule_settings_ui(self):
+        """ルール設定UI更新"""
         for name, (var, label_var, _) in self.rule_setting_vars.items():
             value = getattr(self.rule_settings, name)
             var.set(value)
             label_var.set(f"{value}" if isinstance(value, int) else f"{value:.3f}")
 
-    # マイクリスト更新
     def _populate_mic_list(self):
+        """マイクリスト更新"""
         try:
-            # sounddeviceの初期化をテスト
             all_devices = sd.query_devices()
-            input_devices_info = [
-                (i, d)
-                for i, d in enumerate(all_devices)
-                if d.get("max_input_channels", 0) > 0
-            ]
+            input_devices_info = self._get_input_devices(all_devices)
 
             if not input_devices_info:
                 self.add_log("入力デバイスが見つかりません。", "warning")
@@ -513,146 +518,166 @@ class SnoreGuardApp:
 
             self.input_devices = {}
 
-            # 既定のデバイスを取得
+            # 既定デバイスを追加
+            self._add_default_device(all_devices)
+
+            # 個別デバイスを追加
+            self._add_individual_devices(input_devices_info)
+
+            # UIを更新
+            self._update_mic_combobox()
+
+        except Exception as e:
+            self._handle_mic_list_error(e)
+
+    def _get_input_devices(self, all_devices):
+        """入力デバイス情報を取得"""
+        return [
+            (i, d)
+            for i, d in enumerate(all_devices)
+            if d.get("max_input_channels", 0) > 0
+        ]
+
+    def _add_default_device(self, all_devices):
+        """既定デバイスを追加"""
+        try:
+            default_device_id = self._get_default_device_id()
+            if self._is_valid_default_device(default_device_id, all_devices):
+                device_info = all_devices[default_device_id]
+                if self._should_add_device(device_info):
+                    self.input_devices["既定のデバイス"] = default_device_id
+                    self.add_log(
+                        f"既定デバイス: {device_info.get('name', 'Unknown')}", "system"
+                    )
+            else:
+                self.add_log("既定のデバイスIDが無効です", "warning")
+        except Exception as e:
+            self.add_log(f"既定デバイスの取得に失敗: {e}", "warning")
+
+    def _get_default_device_id(self):
+        """既定デバイスIDを取得"""
+        default_info = sd.default.device
+
+        # _InputOutputPairオブジェクトの場合
+        if hasattr(default_info, "input") and default_info.input is not None:
+            return default_info.input
+
+        # タプルやリストの場合
+        if isinstance(default_info, (list, tuple)) and len(default_info) >= 1:
+            return default_info[0]
+
+        # 単一の整数の場合
+        if isinstance(default_info, int):
+            return default_info
+
+        # その他の場合
+        try:
+            if hasattr(sd.default.device, "__getitem__") or hasattr(
+                sd.default.device, "__iter__"
+            ):
+                return sd.default.device[0]
+        except Exception:
+            pass
+
+        return None
+
+    def _is_valid_default_device(self, device_id, all_devices):
+        """既定デバイスが有効かチェック"""
+        return device_id is not None and 0 <= device_id < len(all_devices)
+
+    def _should_add_device(self, device_info):
+        """デバイスを追加すべきかチェック"""
+        return device_info.get(
+            "max_input_channels", 0
+        ) > 0 and "Microsoft Sound Mapper" not in device_info.get("name", "")
+
+    def _add_individual_devices(self, input_devices_info):
+        """個別のマイクデバイスを追加"""
+        seen_device_names = set()
+        default_device_id = self.input_devices.get("既定のデバイス")
+
+        for device_id, device_info in input_devices_info:
             try:
-                default_info = sd.default.device
-                default_device_id = None
+                if self._should_skip_device(device_id, device_info, default_device_id):
+                    continue
 
-                # _InputOutputPairオブジェクトの場合
-                try:
-                    if (
-                        default_info
-                        and getattr(default_info, "input", None) is not None
-                    ):
-                        default_device_id = default_info.input
-                except (AttributeError, TypeError):
-                    pass
+                device_name = device_info.get("name", f"Unknown Device {device_id}")
 
-                # タプルやリストの場合
-                if (
-                    default_device_id is None
-                    and isinstance(default_info, (list, tuple))
-                    and len(default_info) >= 1
-                ):
-                    default_device_id = default_info[0]
-                # 単一の整数の場合
-                elif default_device_id is None and isinstance(default_info, int):
-                    default_device_id = default_info
-                # その他の場合
-                elif default_device_id is None:
-                    # 他の形式の場合は、sd.default.deviceを直接使用
-                    try:
-                        default_device_id = (
-                            sd.default.device[0]
-                            if hasattr(sd.default.device, "__getitem__")
-                            or hasattr(sd.default.device, "__iter__")
-                            else None
-                        )
-                    except Exception:
-                        default_device_id = None
+                if device_name in seen_device_names:
+                    continue
 
-                # 既定のデバイスを追加
-                if default_device_id is not None and 0 <= default_device_id < len(
-                    all_devices
-                ):
-                    default_device_info = all_devices[default_device_id]
-                    if default_device_info.get(
-                        "max_input_channels", 0
-                    ) > 0 and "Microsoft Sound Mapper" not in default_device_info.get(
-                        "name", ""
-                    ):
-                        self.input_devices["既定のデバイス"] = default_device_id
-                        self.add_log(
-                            f"既定デバイス: {default_device_info.get('name', 'Unknown')}",
-                            "system",
-                        )
-                else:
-                    self.add_log("既定のデバイスIDが無効です", "warning")
-
-            except Exception as e:
-                self.add_log(f"既定デバイスの取得に失敗: {e}", "warning")
-
-            # 個別のマイクデバイスを追加（既定デバイス以外）
-            seen_device_names = set()
-            default_device_id = self.input_devices.get(
-                "既定のデバイス"
-            )  # 既定デバイスのIDを取得
-
-            for device_id, device_info in input_devices_info:
-                try:
-                    # 既定デバイスは既に追加済みなのでスキップ
-                    if (
-                        device_id == default_device_id
-                        or "Microsoft Sound Mapper" in device_info.get("name", "")
-                    ):
-                        continue
-
-                    device_name = device_info.get("name", f"Unknown Device {device_id}")
-
-                    # 同名デバイスは1つだけ表示（WASAPI優先）
-                    if device_name in seen_device_names:
-                        continue
-
-                    # ホストAPIの優先順位チェック
-                    hostapi_index = device_info.get("hostapi", 0)
-                    try:
-                        hostapi_info = sd.query_hostapis()[hostapi_index]
-                        api_name = hostapi_info.get("name", "")
-                        # WASAPI以外は表示しない（重複を避けるため）
-                        if "WASAPI" not in api_name and any(
-                            existing_device
-                            for existing_device in self.input_devices.keys()
-                            if device_name in existing_device
-                            and existing_device != "既定のデバイス"
-                        ):
-                            continue
-                    except Exception:
-                        pass
-
+                if self._is_preferred_api(device_info, device_name):
                     seen_device_names.add(device_name)
                     self.input_devices[device_name] = device_id
 
-                except Exception as e:
-                    self.add_log(f"デバイス {device_id} の処理に失敗: {e}", "warning")
-                    continue
+            except Exception as e:
+                self.add_log(f"デバイス {device_id} の処理に失敗: {e}", "warning")
 
-            if not self.input_devices:
-                self.add_log("有効な入力デバイスが見つかりません。", "error")
-                return
+    def _should_skip_device(self, device_id, device_info, default_device_id):
+        """デバイスをスキップすべきかチェック"""
+        return (
+            device_id == default_device_id
+            or "Microsoft Sound Mapper" in device_info.get("name", "")
+        )
 
-            mic_names = list(self.input_devices.keys())
-            self.mic_combobox.configure(values=mic_names)
+    def _is_preferred_api(self, device_info, device_name):
+        """優先されるAPIかチェック"""
+        try:
+            hostapi_index = device_info.get("hostapi", 0)
+            hostapi_info = sd.query_hostapis()[hostapi_index]
+            api_name = hostapi_info.get("name", "")
 
-            # デバイス選択の優先順位: 1.保存済み 2.既定のデバイス 3.最初のデバイス
-            saved_device = self.app_settings.get("mic_device_name")
-            if saved_device and saved_device in mic_names:
-                self.mic_var.set(saved_device)
-                self.add_log(f"保存済みデバイスを選択: {saved_device}", "system")
-            elif "既定のデバイス" in mic_names:
-                self.mic_var.set("既定のデバイス")
-                self.add_log("既定のデバイスを選択", "system")
-            elif mic_names:
-                self.mic_combobox.set(mic_names[0])
-                self.add_log(f"最初のデバイスを選択: {mic_names[0]}", "system")
+            # WASAPI以外で既に同名デバイスがある場合はスキップ
+            if "WASAPI" not in api_name:
+                existing_devices = [
+                    d
+                    for d in self.input_devices.keys()
+                    if device_name in d and d != "既定のデバイス"
+                ]
+                return len(existing_devices) == 0
 
-        except Exception as e:
-            error_msg = f"マイクデバイスの取得に失敗: {e}"
-            self.add_log(error_msg, "error")
-            # ダイアログは表示するが、アプリは続行
-            messagebox.showerror(
-                "マイクエラー",
-                error_msg + "\n\nアプリは続行しますが、音声入力は利用できません。",
-            )
-            # 空のリストでUIを初期化
-            self.input_devices = {}
-            try:
-                if self.mic_combobox is not None:
-                    self.mic_combobox.configure(values=[])
-            except (AttributeError, NameError):
-                pass
+            return True
+        except Exception:
+            return True
 
-    # 設定UI更新
+    def _update_mic_combobox(self):
+        """マイクコンボボックスを更新"""
+        if not self.input_devices:
+            self.add_log("有効な入力デバイスが見つかりません。", "error")
+            return
+
+        mic_names = list(self.input_devices.keys())
+        self.mic_combobox.configure(values=mic_names)
+
+        # デバイス選択の優先順位: 1.保存済み 2.既定のデバイス 3.最初のデバイス
+        saved_device = self.app_settings.get("mic_device_name")
+        if saved_device and saved_device in mic_names:
+            self.mic_var.set(saved_device)
+            self.add_log(f"保存済みデバイスを選択: {saved_device}", "system")
+        elif "既定のデバイス" in mic_names:
+            self.mic_var.set("既定のデバイス")
+            self.add_log("既定のデバイスを選択", "system")
+        elif mic_names:
+            self.mic_combobox.set(mic_names[0])
+            self.add_log(f"最初のデバイスを選択: {mic_names[0]}", "system")
+
+    def _handle_mic_list_error(self, error):
+        """マイクリストエラーを処理"""
+        error_msg = f"マイクデバイスの取得に失敗: {error}"
+        self.add_log(error_msg, "error")
+        messagebox.showerror(
+            "マイクエラー",
+            error_msg + "\n\nアプリは続行しますが、音声入力は利用できません。",
+        )
+        self.input_devices = {}
+        try:
+            if self.mic_combobox is not None:
+                self.mic_combobox.configure(values=[])
+        except (AttributeError, NameError):
+            pass
+
     def _update_ui_with_settings(self):
+        """設定UI更新"""
         self.notification_var.set(
             self.app_settings.get("audio_notification_enabled", True)
         )
@@ -670,8 +695,8 @@ class SnoreGuardApp:
         self._update_rule_settings_ui()
         self._update_control_state()
 
-    # 設定保存
     def _save_app_settings(self, *args):
+        """設定保存"""
         self.app_settings["mic_device_name"] = self.mic_var.get()
         self.app_settings["audio_notification_enabled"] = self.notification_var.get()
         if self.HAS_OSC:
@@ -679,20 +704,20 @@ class SnoreGuardApp:
         self.app_settings["rule_settings"] = asdict(self.rule_settings)
         self.settings_manager.save(self.app_settings)
 
-    # 詳細ステータス更新
     def _update_detailed_status(self, res: dict):
+        """詳細ステータス更新"""
         results = res.get("analysis_results")
         if not results:
             return
 
         def get_last(key):
-            return results[key][-1] if len(results[key]) > 0 else 0
+            return results[key][-1] if key in results and len(results[key]) > 0 else 0
 
         for key, var in self.detailed_status_vars.items():
             if key == "energy":
                 var.configure(text=f"{get_last('rms'):.4f}")
             elif key == "f0_confidence":
-                var.configure(text=f"{get_last('f0_confidence'):.3f}")
+                var.configure(text=f"{get_last('voiced_probs'):.3f}")
             elif key == "spectral_centroid":
                 var.configure(text=f"{get_last('spectral_centroid'):.1f}")
             elif key == "zcr":
@@ -706,8 +731,8 @@ class SnoreGuardApp:
         )
         self.periodicity_timer_start_time = res.get("first_event_timestamp")
 
-    # ログ追加
     def add_log(self, message: str, level: str = "info"):
+        """ログ追加"""
         try:
             if not self.log_text or not self.log_text.winfo_exists():
                 return
@@ -722,19 +747,12 @@ class SnoreGuardApp:
         except (tk.TclError, RuntimeError):
             pass
 
-    # スレッドセーフなログ追加
     def add_log_threadsafe(self, message: str, level: str = "info"):
-        try:
-            self.root.after(0, self.add_log, message, level)
-        except RuntimeError as e:
-            if "main thread is not in main loop" in str(e):
-                # メインループが開始前の場合は無視
-                logger.debug(f"ログ追加をスキップ: {message}")
-            else:
-                raise
+        """スレッドセーフなログ追加"""
+        ThreadSafeHandler.safe_log(self.root, self.add_log, message, level)
 
-    # 終了処理
     def _on_closing(self):
+        """終了処理"""
         logger.debug("アプリケーション終了処理開始")
         if self.is_running:
             logger.debug("検出処理を停止中")
@@ -747,19 +765,14 @@ class SnoreGuardApp:
         self.root.destroy()
         logger.debug("アプリケーション終了処理完了")
 
-    # OSC接続状態変更通知
     def on_osc_status_change(self, is_connected: bool, message: str):
-        try:
-            self.root.after(0, self._update_osc_status_ui, is_connected, message)
-        except RuntimeError as e:
-            if "main thread is not in main loop" in str(e):
-                # メインループが開始前の場合は無視
-                logger.debug("OSC状態変更通知をスキップ: メインループ開始前")
-            else:
-                raise
+        """OSC接続状態変更通知"""
+        ThreadSafeHandler.safe_after(
+            self.root, self._update_osc_status_ui, is_connected, message
+        )
 
-    # OSC接続状態UI更新
     def _update_osc_status_ui(self, is_connected: bool, message: str):
+        """OSC接続状態UI更新"""
         if self.is_running:
             return
         if is_connected:
@@ -775,19 +788,14 @@ class SnoreGuardApp:
         self.status_label.configure(fg_color=color)
         self.status_label_var.set(text)
 
-    # VRChatミュート状態変更通知
     def on_vrchat_mute_change(self, is_muted: bool):
-        try:
-            self.root.after(0, self._update_internal_mute_state, is_muted)
-        except RuntimeError as e:
-            if "main thread is not in main loop" in str(e):
-                # メインループが開始前の場合は無視
-                logger.debug("VRChatミュート状態変更通知をスキップ: メインループ開始前")
-            else:
-                raise
+        """VRChatミュート状態変更通知"""
+        ThreadSafeHandler.safe_after(
+            self.root, self._update_internal_mute_state, is_muted
+        )
 
-    # 内部ミュート状態更新
     def _update_internal_mute_state(self, is_muted: bool):
+        """内部ミュート状態更新"""
         if self.is_vrchat_muted != is_muted and self.is_awaiting_mute_sync:
             self.add_log(
                 f"ミュート同期完了: {'ミュート' if is_muted else 'ミュート解除'}",
@@ -799,8 +807,8 @@ class SnoreGuardApp:
                 self.root.after(150, self.vrc_handler.toggle_mute)
         self.is_vrchat_muted = is_muted
 
-    # ミュート同期タイムアウトキャンセル
     def _cancel_mute_sync_timeout(self, success=False):
+        """ミュート同期タイムアウトキャンセル"""
         if self.sync_timeout_id:
             self.root.after_cancel(self.sync_timeout_id)
         self.sync_timeout_id = None

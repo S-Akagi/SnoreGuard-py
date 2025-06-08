@@ -7,8 +7,15 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 
-# 設定ファイルの読み書きを管理するクラス
 class SettingsManager:
+    """
+    アプリケーション設定の永続化と管理を担当
+    - JSON形式の設定ファイルの読み書き
+    - キャッシュ機能
+    - ファイルの変更検知
+    - スレッドセーフな操作
+    """
+
     def __init__(self, filepath: Path):
         logger.debug(f"SettingsManager初期化: {filepath}")
         self.filepath = filepath
@@ -37,12 +44,12 @@ class SettingsManager:
                 # ファイルを読み込んでキャッシュを更新
                 try:
                     with open(self.filepath, encoding="utf-8") as f:
-                        settings = json.load(f)  # 設定を読み込む
+                        settings = json.load(f)
 
-                    self._cache = settings  # キャッシュを更新
-                    self._file_mtime = current_mtime  # ファイルの変更時刻を更新
+                    self._cache = settings
+                    self._file_mtime = current_mtime
                     logger.info(f"設定ファイル読み込み完了: {len(settings)}個の設定")
-                    return settings.copy()  # 設定を返却
+                    return settings.copy()
 
                 except (OSError, json.JSONDecodeError) as e:
                     logger.error(f"設定ファイル読み込みエラー: {e}")
@@ -50,9 +57,9 @@ class SettingsManager:
 
             # ファイルが存在しないか読み込み失敗時はデフォルトを返す
             logger.debug("デフォルト設定を使用")
-            self._cache = default_settings.copy()  # デフォルト設定をキャッシュにコピー
-            self._file_mtime = None  # ファイルの変更時刻をクリア
-            return default_settings.copy()  # デフォルト設定を返却
+            self._cache = default_settings.copy()
+            self._file_mtime = None
+            return default_settings.copy()
 
     # 設定をファイルに保存
     def save(self, settings: dict[str, Any]):
@@ -97,5 +104,5 @@ class SettingsManager:
     def clear_cache(self):
         logger.debug("設定キャッシュクリア")
         with self._cache_lock:
-            self._cache = None  # キャッシュをクリア
-            self._file_mtime = None  # ファイルの変更時刻をクリア
+            self._cache = None
+            self._file_mtime = None
