@@ -8,8 +8,15 @@ from core.rule_processor import RuleBasedProcessor
 
 logger = logging.getLogger(__name__)
 
-# 音声処理、いびき検出、スレッド管理を担当するクラス
+
 class AudioService:
+    """
+    音声処理、いびき検出、スレッド管理を担当
+    - オーディオストリームの管理
+    - ルールベースプロセッサの管理
+    - スレッド管理
+    """
+
     SAMPLE_RATE = 16000  # サンプリングレート
     VIZ_CHUNK_SIZE = 1600  # 0.1秒
     ANALYSIS_CHUNK_DURATION_S = 1.0  # 分析チャンクの長さ
@@ -18,7 +25,6 @@ class AudioService:
     _spectrum_buffer: np.ndarray | None = None  # スペクトラムバッファ
     _fft_buffer: np.ndarray | None = None  # FFTバッファ
 
-    # 初期化
     def __init__(
         self,
         rule_settings,
@@ -56,8 +62,8 @@ class AudioService:
             f"AudioService初期化完了 - SR:{self.SAMPLE_RATE}, FFT:{self.N_FFT}"
         )
 
-    # 検出スレッドを開始
     def start(self, device_id: int):
+        """検出スレッドを開始"""
         logger.debug(f"AudioService開始要求 - device_id: {device_id}")
         if self.is_running:
             logger.warning("AudioService既に実行中")
@@ -91,8 +97,8 @@ class AudioService:
         self._thread.start()
         logger.info(f"AudioService開始完了 - device_id: {device_id}")
 
-    # 検出スレッドを停止する
     def stop(self):
+        """検出スレッドを停止"""
         logger.debug("AudioService停止要求")
         self.is_running = False  # 実行中フラグをクリア
 
@@ -106,12 +112,12 @@ class AudioService:
         self._buffer_size = 0  # バッファサイズをリセット
         logger.info("AudioService停止完了")
 
-    # プロセッサの周期性イベントをリセットする
     def reset_processor_periodicity(self):
+        """プロセッサの周期性イベントをリセット"""
         self.processor.reset_periodicity()
 
-    # 音声入力と処理のメインループを開始
     def _detection_loop(self, device_id: int):
+        """音声入力と処理のメインループを開始"""
         logger.debug(f"検出ループ開始 - device_id: {device_id}")
         try:
             # オーディオストリームを開始
@@ -142,8 +148,8 @@ class AudioService:
             self.log_callback("オーディオストリームを停止しました。", "system")
             self.is_running = False  # 実行中フラグをクリア
 
-    # ストリームからデータを読み込み、処理キューに追加する
     def _process_stream_data(self):
+        """ストリームからデータを読み込み、処理キューに追加"""
         # 実行中フラグがFalseまたはストリームがNoneの場合
         if not self.is_running or not self.stream:
             return
@@ -196,15 +202,15 @@ class AudioService:
                 ]
             self._buffer_size = remaining_size
 
-    # FFTを実行して周波数スペクトラムを計算する（レガシー版）
     def _calculate_spectrum(self, chunk: np.ndarray) -> np.ndarray:
+        """FFTを実行して周波数スペクトラムを計算"""
         padded_chunk = np.pad(chunk, (0, max(0, self.N_FFT - len(chunk))))
         # FFTを実行
         fft_result = np.fft.rfft(padded_chunk[: self.N_FFT])
         return np.abs(fft_result) / self.N_FFT
 
-    # 最適化されたFFT計算（事前割り当てバッファ使用）
     def _calculate_spectrum_optimized(self, chunk: np.ndarray) -> np.ndarray:
+        """最適化されたFFT計算（事前割り当てバッファ使用）"""
         chunk_len = len(chunk)
         logger.debug(f"スペクトラム計算 - chunk_len: {chunk_len}")
         chunk_float64 = chunk.astype(np.float64)
@@ -223,4 +229,4 @@ class AudioService:
         # 絶対値を計算
         spectrum = np.abs(fft_result) / self.N_FFT
 
-        return spectrum.astype(np.float32)
+        return spectrum.astype(np.float32)  # メモリ効率のためfloat32で返す

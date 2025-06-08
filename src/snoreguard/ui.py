@@ -11,8 +11,13 @@ from matplotlib.figure import Figure
 logger = logging.getLogger(__name__)
 
 
-# リソースパスを解決
 def get_resource_path(relative_path):
+    """
+    実行環境に応じてリソースファイルのパスを解決
+    - PyInstallerでパッケージされた実行ファイルでは_MEIPASSが設定される
+    - それをベースパスとして使用
+    - 開発環境ではファイルの相対パスを使用
+    """
     try:
         base_path = sys._MEIPASS
     except AttributeError:
@@ -23,14 +28,22 @@ def get_resource_path(relative_path):
     return str(full_path)
 
 
-# UIビルダー
 class UIBuilder:
+    """
+    SnoreGuardアプリケーションのUIコンポーネントを構築
+    - ダッシュボードレイアウト、リアルタイムプロット、設定パネルなどのコンポーネントを作成・配置
+    """
+
     def __init__(self, app):
+        """
+        UIBuilderを初期化してUIコンポーネントを構築
+        - app: メインアプリケーションインスタンス
+        """
         logger.debug("UIBuilder初期化開始")
         self.app = app
         self.root = app.root
 
-        # フォントキャッシュ
+        # パフォーマンス向上のためフォントオブジェクトをキャッシュ
         self._font_cache = {
             "large": ctk.CTkFont(family="Meiryo UI", size=14, weight="bold"),
             "medium": ctk.CTkFont(family="Meiryo UI", size=12),
@@ -40,26 +53,31 @@ class UIBuilder:
         self.font_m = self._font_cache["medium"]
         self.font_s = self._font_cache["small"]
 
-        # カラー
-        self.COLOR_BG = "#202225"
-        self.COLOR_CARD = "#2f3136"
-        self.COLOR_WIDGET = "#40444b"
-        self.COLOR_TEXT_1 = "#FFFFFF"
-        self.COLOR_TEXT_2 = "#96989d"
+        # Discord風ダークテーマのカラーパレット
+        self.COLOR_BG = "#202225"  # メイン背景色
+        self.COLOR_CARD = "#2f3136"  # カード背景色
+        self.COLOR_WIDGET = "#40444b"  # ウィジェット背景色
+        self.COLOR_TEXT_1 = "#FFFFFF"  # メインテキスト色
+        self.COLOR_TEXT_2 = "#96989d"  # サブテキスト色
 
-        # カラーキャッシュ
+        # カラー変換結果のキャッシュ（パフォーマンス向上）
         self._color_cache: dict[str, str] = {}
 
-        # ウィンドウ設定
-        self._setup_main_window()
+        # UIコンポーネントを次の順序で構築
+        self._setup_main_window()  # メインウィンドウの基本設定
         logger.debug("メインウィンドウ設定完了")
-        self._create_dashboard_layout()
+        self._create_dashboard_layout()  # ダッシュボードレイアウト作成
         logger.debug("ダッシュボードレイアウト作成完了")
-        self._init_plots()
+        self._init_plots()  # リアルタイムプロット初期化
         logger.debug("UI初期化完了")
 
-    # 16進数カラーを取得
     def _get_hex_color(self, color_name_or_tuple):
+        """
+        CustomTkinterのカラー名を16進数カラーコードに変換
+        - ダーク/ライトモードに対応し、パフォーマンス向上のため変換結果をキャッシュ
+        - color_name_or_tuple: カラー名または(light, dark)タプル
+        - 16進数カラーコード (#RRGGBB形式)
+        """
         cache_key = str(color_name_or_tuple) + ctk.get_appearance_mode()
         if cache_key in self._color_cache:
             return self._color_cache[cache_key]
@@ -77,8 +95,11 @@ class UIBuilder:
         self._color_cache[cache_key] = hex_color
         return hex_color
 
-    # メインウィンドウ設定
     def _setup_main_window(self):
+        """
+        メインウィンドウの基本設定
+        - タイトル、サイズ、背景色、グリッド設定、アイコンなどを設定
+        """
         logger.debug("メインウィンドウ設定開始")
         self.root.title("SnoreGuard Dashboard")
         self.root.geometry("1280x720")
@@ -89,8 +110,11 @@ class UIBuilder:
         self._set_window_icon()
         logger.debug("メインウィンドウ設定完了")
 
-    # ウィンドウアイコン設定
     def _set_window_icon(self):
+        """
+        アプリケーションウィンドウのアイコンを設定
+        - 優先度の順で複数のアイコンファイルを探し、.icoファイルが見つからない場合は.gifファイルを使用
+        """
         try:
             icon_paths = [
                 "src/assets/icon/icon.ico",
@@ -98,6 +122,7 @@ class UIBuilder:
                 "icon.ico",
             ]
 
+            # アイコンファイルを探す
             for icon_path in icon_paths:
                 try:
                     full_path = get_resource_path(icon_path)
@@ -107,14 +132,13 @@ class UIBuilder:
                 except Exception:
                     continue
 
+            # GIFファイルを探す
             gif_paths = ["src/assets/icon/icon.gif", "assets/icon/icon.gif", "icon.gif"]
 
             for gif_path in gif_paths:
                 try:
                     full_path = get_resource_path(gif_path)
                     if Path(full_path).exists():
-                        import tkinter as tk
-
                         icon_image = tk.PhotoImage(file=full_path)
                         self.root.wm_iconphoto(False, icon_image)
                         self.root._icon_image = icon_image
@@ -125,8 +149,13 @@ class UIBuilder:
         except Exception as e:
             logger.error(f"アイコン設定中にエラー: {e}", exc_info=True)
 
-    # ダッシュボードレイアウト作成
     def _create_dashboard_layout(self):
+        """
+        3カラム構成のダッシュボードレイアウトを作成
+        - 左: リアルタイム分析カード
+        - 中央: ステータス、コントロール、ログカード
+        - 右: 設定カード
+        """
         # メインフレーム
         main_frame = ctk.CTkFrame(self.root, fg_color="transparent")
         main_frame.grid(row=0, column=0, padx=10, pady=10, sticky="nsew")
@@ -161,8 +190,16 @@ class UIBuilder:
         right_column.grid_columnconfigure(0, weight=1)
         self._create_settings_card(right_column, row=0, col=0)  # 設定UI
 
-    # カードフレーム作成
     def _create_card_frame(self, parent, title, col=0, row=0, **kwargs):
+        """
+        統一されたデザインのカードフレームを作成
+        - parent: 親ウィジェット
+        - title: カードのタイトル（Noneの場合はタイトルなし）
+        - col: Gridの列位置
+        - row: Gridの行位置
+        - **kwargs: その他のCTkFrameのオプション
+        - ctk.CTkFrame: 作成されたカードフレーム
+        """
         card = ctk.CTkFrame(parent, fg_color=self.COLOR_CARD, corner_radius=8, **kwargs)
         card.grid(row=row, column=col, sticky="nsew", padx=5, pady=5)
         card.grid_columnconfigure(0, weight=1)
@@ -172,8 +209,14 @@ class UIBuilder:
             ).grid(row=0, column=0, padx=15, pady=(10, 5), sticky="w")
         return card
 
-    # 分析カード作成
     def _create_analysis_card(self, parent, row, col):
+        """
+        リアルタイム音声分析用のカードを作成
+        - 波形とスペクトラムのプロット
+        - 音響特徴量の表示
+        - 判定ステータスランプ
+        - 周期性イベントの進捗表示
+        """
         logger.debug("分析カード作成開始")
         app = self.app
         card = self._create_card_frame(parent, "リアルタイム分析", col, row)
@@ -265,8 +308,10 @@ class UIBuilder:
         app.periodicity_progressbar.set(0)
         logger.debug("分析カード作成完了")
 
-    # ステータスカード作成
     def _create_status_card(self, parent, row, col):
+        """
+        アプリケーションの現在の状態を表示するカードを作成
+        """
         app = self.app
         card = self._create_card_frame(parent, "ステータス", col, row)
         app.status_label = ctk.CTkLabel(
@@ -279,8 +324,10 @@ class UIBuilder:
         )
         app.status_label.grid(row=1, column=0, sticky="nsew", padx=10, pady=(5, 10))
 
-    # コントロールカード作成
     def _create_control_card(self, parent, row, col):
+        """
+        音声検出の開始/停止、デバイス選択、オプション設定用のカードを作成
+        """
         logger.debug("コントロールカード作成開始")
         app = self.app
         card = self._create_card_frame(parent, "コントロール", col, row)
@@ -327,8 +374,10 @@ class UIBuilder:
             ).pack(side="left")
         logger.debug("コントロールカード作成完了")
 
-    # ログカード作成
     def _create_log_card(self, parent, row, col):
+        """
+        いびき検出ログやシステムメッセージを表示するカードを作成
+        """
         app, card = self.app, self._create_card_frame(parent, "検出ログ", col, row)
         card.grid_rowconfigure(1, weight=1)
         app.log_text = ctk.CTkTextbox(
@@ -341,8 +390,10 @@ class UIBuilder:
         app.log_text.grid(row=1, column=0, sticky="nsew", padx=10, pady=(5, 10))
         app.log_text.configure(state="disabled")
 
-    # 設定カード作成
     def _create_settings_card(self, parent, row, col):
+        """
+        いびき検出ルールのパラメータ調整用のスクロール可能な設定カードを作成
+        """
         app = self.app
         card = ctk.CTkScrollableFrame(
             parent,
@@ -408,8 +459,13 @@ class UIBuilder:
             slider.grid(row=1, column=0, sticky="ew", padx=5)
             app.rule_setting_vars[name] = (var, val_label_var, slider)
 
-    # プロット初期化
     def _init_plots(self):
+        """
+        リアルタイム波形とスペクトラム表示用のmatplotlibプロットを初期化
+        - ダークテーマに合わせたスタイリング
+        - 軸の設定
+        - 初期データの設定
+        """
         logger.debug("プロット初期化開始")
         app, sr, n_fft = (
             self.app,
@@ -420,12 +476,15 @@ class UIBuilder:
         plot_bg_color = app.fig.get_facecolor()
 
         def style_axis(ax):
+            """個別のプロット軸にダークテーマスタイリングを適用。"""
             ax.set_facecolor(plot_bg_color)
+            # 下と左の軸線のみ表示してシンプルなデザインに
             for spine in ["bottom", "left"]:
                 ax.spines[spine].set_color(hex_text_color)
                 ax.spines[spine].set_linewidth(0.6)
             for spine in ["top", "right"]:
                 ax.spines[spine].set_visible(False)
+            # テキスト色をダークテーマに合わせて設定
             ax.tick_params(axis="y", colors=hex_text_color, labelsize=8, width=0.6)
             ax.tick_params(axis="x", colors=hex_text_color, labelsize=8, width=0.6)
             ax.title.set_color(hex_text_color)

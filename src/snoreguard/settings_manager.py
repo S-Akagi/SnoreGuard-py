@@ -7,8 +7,15 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 
-# 設定ファイルの読み書きを管理するクラス
 class SettingsManager:
+    """
+    アプリケーション設定の永続化と管理を担当
+    - JSON形式の設定ファイルの読み書き
+    - キャッシュ機能
+    - ファイルの変更検知
+    - スレッドセーフな操作
+    """
+
     def __init__(self, filepath: Path):
         logger.debug(f"SettingsManager初期化: {filepath}")
         self.filepath = filepath
