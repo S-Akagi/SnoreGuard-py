@@ -10,16 +10,18 @@ from matplotlib.figure import Figure
 
 logger = logging.getLogger(__name__)
 
+
 # リソースパスを解決
 def get_resource_path(relative_path):
     try:
         base_path = sys._MEIPASS
     except AttributeError:
         base_path = Path(__file__).parent.parent.parent
-    
+
     full_path = Path(base_path) / relative_path
     logger.debug(f"リソースパス解決: {relative_path} -> {full_path}")
     return str(full_path)
+
 
 # UIビルダー
 class UIBuilder:
@@ -83,44 +85,41 @@ class UIBuilder:
         self.root.configure(fg_color=self.COLOR_BG)
         self.root.grid_columnconfigure(0, weight=1)
         self.root.grid_rowconfigure(0, weight=1)
-        
+
         self._set_window_icon()
         logger.debug("メインウィンドウ設定完了")
-    
+
     # ウィンドウアイコン設定
     def _set_window_icon(self):
         try:
             icon_paths = [
                 "src/assets/icon/icon.ico",
-                "assets/icon/icon.ico", 
-                "icon.ico"
+                "assets/icon/icon.ico",
+                "icon.ico",
             ]
-            
+
             for icon_path in icon_paths:
                 try:
                     full_path = get_resource_path(icon_path)
                     if Path(full_path).exists():
                         self.root.iconbitmap(full_path)
                         return
-                except Exception as e:
+                except Exception:
                     continue
-            
-            gif_paths = [
-                "src/assets/icon/icon.gif",
-                "assets/icon/icon.gif",
-                "icon.gif"
-            ]
-            
+
+            gif_paths = ["src/assets/icon/icon.gif", "assets/icon/icon.gif", "icon.gif"]
+
             for gif_path in gif_paths:
                 try:
                     full_path = get_resource_path(gif_path)
                     if Path(full_path).exists():
                         import tkinter as tk
+
                         icon_image = tk.PhotoImage(file=full_path)
                         self.root.wm_iconphoto(False, icon_image)
                         self.root._icon_image = icon_image
                         return
-                except Exception as e:
+                except Exception:
                     continue
 
         except Exception as e:
@@ -128,11 +127,9 @@ class UIBuilder:
 
     # ダッシュボードレイアウト作成
     def _create_dashboard_layout(self):
-        # メインフレーム 
+        # メインフレーム
         main_frame = ctk.CTkFrame(self.root, fg_color="transparent")
-        main_frame.grid(
-            row=0, column=0, padx=10, pady=10, sticky="nsew"
-        )  
+        main_frame.grid(row=0, column=0, padx=10, pady=10, sticky="nsew")
         main_frame.grid_columnconfigure(0, weight=3, uniform="a")  # 左カラム
         main_frame.grid_columnconfigure(1, weight=3, uniform="a")  # 中央カラム
         main_frame.grid_columnconfigure(2, weight=3, uniform="a")  # 右カラム
@@ -140,31 +137,29 @@ class UIBuilder:
 
         # --- 左カラム ---
         left_column = ctk.CTkFrame(main_frame, fg_color="transparent")
-        left_column.grid(row=0, column=0, sticky="nsew", padx=(0, 5)) 
+        left_column.grid(row=0, column=0, sticky="nsew", padx=(0, 5))
         left_column.grid_rowconfigure(0, weight=1)
         left_column.grid_columnconfigure(0, weight=1)
-        self._create_analysis_card(left_column, row=0, col=0) # 分析UI
+        self._create_analysis_card(left_column, row=0, col=0)  # 分析UI
 
         # --- 中央カラム ---
         center_column = ctk.CTkFrame(main_frame, fg_color="transparent")
-        center_column.grid(
-            row=0, column=1, sticky="nsew", padx=5
-        )
+        center_column.grid(row=0, column=1, sticky="nsew", padx=5)
         center_column.grid_columnconfigure(0, weight=1)
         center_column.grid_rowconfigure(0, weight=0)  # ステータスUI
         center_column.grid_rowconfigure(1, weight=0)  # コントロールUI
         center_column.grid_rowconfigure(2, weight=1)  # ログUI
 
-        self._create_status_card(center_column, row=0, col=0) # ステータスUI
-        self._create_control_card(center_column, row=1, col=0) # コントロールUI
-        self._create_log_card(center_column, row=2, col=0) # ログUI
+        self._create_status_card(center_column, row=0, col=0)  # ステータスUI
+        self._create_control_card(center_column, row=1, col=0)  # コントロールUI
+        self._create_log_card(center_column, row=2, col=0)  # ログUI
 
         # --- 右カラム ---
         right_column = ctk.CTkFrame(main_frame, fg_color="transparent")
         right_column.grid(row=0, column=2, sticky="nsew", padx=(5, 0))
         right_column.grid_rowconfigure(0, weight=1)
         right_column.grid_columnconfigure(0, weight=1)
-        self._create_settings_card(right_column, row=0, col=0) # 設定UI
+        self._create_settings_card(right_column, row=0, col=0)  # 設定UI
 
     # カードフレーム作成
     def _create_card_frame(self, parent, title, col=0, row=0, **kwargs):

@@ -8,15 +8,16 @@ from core.rule_processor import RuleBasedProcessor
 
 logger = logging.getLogger(__name__)
 
+
 # 音声処理、いびき検出、スレッド管理を担当するクラス
 class AudioService:
-    SAMPLE_RATE = 16000 # サンプリングレート
+    SAMPLE_RATE = 16000  # サンプリングレート
     VIZ_CHUNK_SIZE = 1600  # 0.1秒
-    ANALYSIS_CHUNK_DURATION_S = 1.0 # 分析チャンクの長さ
-    N_FFT = 480 # FFTのサイズ
+    ANALYSIS_CHUNK_DURATION_S = 1.0  # 分析チャンクの長さ
+    N_FFT = 480  # FFTのサイズ
 
-    _spectrum_buffer: np.ndarray | None = None # スペクトラムバッファ
-    _fft_buffer: np.ndarray | None = None # FFTバッファ
+    _spectrum_buffer: np.ndarray | None = None  # スペクトラムバッファ
+    _fft_buffer: np.ndarray | None = None  # FFTバッファ
 
     # 初期化
     def __init__(
@@ -27,26 +28,34 @@ class AudioService:
         log_callback: Callable[[str, str], None],
     ):
         logger.debug("AudioService初期化開始")
-        self.rule_settings = rule_settings # ルール設定
-        self.data_queue = data_queue # データキュー
-        self.snore_detected_callback = snore_detected_callback # いびき検出コールバック
-        self.log_callback = log_callback # ログコールバック
+        self.rule_settings = rule_settings  # ルール設定
+        self.data_queue = data_queue  # データキュー
+        self.snore_detected_callback = snore_detected_callback  # いびき検出コールバック
+        self.log_callback = log_callback  # ログコールバック
 
-        self.processor = RuleBasedProcessor(self.rule_settings, self.snore_detected_callback) # ルールベースプロセッサ
-        self.is_running = False # 実行中フラグ
-        self._thread: threading.Thread | None = None # スレッド
-        self.stream: sd.InputStream | None = None # ストリーム
+        self.processor = RuleBasedProcessor(
+            self.rule_settings, self.snore_detected_callback
+        )  # ルールベースプロセッサ
+        self.is_running = False  # 実行中フラグ
+        self._thread: threading.Thread | None = None  # スレッド
+        self.stream: sd.InputStream | None = None  # ストリーム
 
         # バッファの事前割り当て
         max_buffer_size = int(self.SAMPLE_RATE * self.ANALYSIS_CHUNK_DURATION_S * 2)
-        self.analysis_buffer = np.zeros(max_buffer_size, dtype=np.float32) # 分析バッファ
-        self._buffer_size = 0 # バッファサイズ
+        self.analysis_buffer = np.zeros(
+            max_buffer_size, dtype=np.float32
+        )  # 分析バッファ
+        self._buffer_size = 0  # バッファサイズ
 
         # FFT関連バッファの事前割り当て
-        self._spectrum_buffer = np.zeros(self.N_FFT // 2 + 1, dtype=np.float32) # スペクトラムバッファ
-        self._fft_buffer = np.zeros(self.N_FFT, dtype=np.float64) # FFTバッファ
+        self._spectrum_buffer = np.zeros(
+            self.N_FFT // 2 + 1, dtype=np.float32
+        )  # スペクトラムバッファ
+        self._fft_buffer = np.zeros(self.N_FFT, dtype=np.float64)  # FFTバッファ
 
-        logger.debug(f"AudioService初期化完了 - SR:{self.SAMPLE_RATE}, FFT:{self.N_FFT}")
+        logger.debug(
+            f"AudioService初期化完了 - SR:{self.SAMPLE_RATE}, FFT:{self.N_FFT}"
+        )
 
     # 検出スレッドを開始
     def start(self, device_id: int):
@@ -54,24 +63,26 @@ class AudioService:
         if self.is_running:
             logger.warning("AudioService既に実行中")
             return
-        
+
         # デバイスの有効性を確認
         try:
             devices = sd.query_devices()
             if device_id >= len(devices):
                 raise ValueError(f"無効なデバイスID: {device_id}")
-            
+
             device_info = devices[device_id]
-            if device_info.get('max_input_channels', 0) <= 0:
-                raise ValueError(f"入力チャンネルがないデバイス: {device_info.get('name', 'Unknown')}")
-            
+            if device_info.get("max_input_channels", 0) <= 0:
+                raise ValueError(
+                    f"入力チャンネルがないデバイス: {device_info.get('name', 'Unknown')}"
+                )
+
             logger.debug(f"デバイス検証完了: {device_info.get('name', 'Unknown')}")
-            
+
         except Exception as e:
             logger.error(f"デバイス検証失敗: {e}")
             raise
-        
-        self.is_running = True # 実行中フラグをセット
+
+        self.is_running = True  # 実行中フラグをセット
         self._buffer_size = 0  # バッファサイズをリセット
         logger.debug("検出スレッド作成中")
 
@@ -84,7 +95,7 @@ class AudioService:
     # 検出スレッドを停止する
     def stop(self):
         logger.debug("AudioService停止要求")
-        self.is_running = False # 実行中フラグをクリア
+        self.is_running = False  # 実行中フラグをクリア
 
         # スレッドが存在する場合
         if self._thread and self._thread.is_alive():
@@ -130,14 +141,14 @@ class AudioService:
         finally:
             logger.info("検出ループ終了")
             self.log_callback("オーディオストリームを停止しました。", "system")
-            self.is_running = False # 実行中フラグをクリア
+            self.is_running = False  # 実行中フラグをクリア
 
     # ストリームからデータを読み込み、処理キューに追加する
     def _process_stream_data(self):
         # 実行中フラグがFalseまたはストリームがNoneの場合
         if not self.is_running or not self.stream:
             return
-        
+
         # ストリームからデータを読み込み
         viz_chunk, overflowed = self.stream.read(self.VIZ_CHUNK_SIZE)
         if overflowed:

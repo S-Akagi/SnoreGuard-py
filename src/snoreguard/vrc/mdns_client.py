@@ -7,6 +7,7 @@ from typing import Dict, List, Optional, Callable
 
 logger = logging.getLogger(__name__)
 
+
 # mDNSレコードを表現するクラス
 class MDNSRecord:
     # 初期化
@@ -17,25 +18,26 @@ class MDNSRecord:
         self.ttl = ttl
         self.data = data
 
+
 # 軽量mDNSクライアント実装
 class MDNSClient:
-    MDNS_PORT = 5353 # mDNSポート
-    MDNS_GROUP = "224.0.0.251" # mDNSグループ
+    MDNS_PORT = 5353  # mDNSポート
+    MDNS_GROUP = "224.0.0.251"  # mDNSグループ
 
     # DNSレコードタイプ
-    TYPE_A = 1 # Aレコード
-    TYPE_PTR = 12 # PTRレコード
-    TYPE_TXT = 16 # TXTレコード
-    TYPE_SRV = 33 # SRVレコード
+    TYPE_A = 1  # Aレコード
+    TYPE_PTR = 12  # PTRレコード
+    TYPE_TXT = 16  # TXTレコード
+    TYPE_SRV = 33  # SRVレコード
 
     # 初期化
     def __init__(self, service_callback: Optional[Callable] = None):
         logger.debug("MDNSClient初期化")
-        self.socket = None # ソケット
-        self.running = False # 実行中フラグ
-        self.thread = None # スレッド
-        self.service_callback = service_callback # サービスコールバック
-        self.discovered_services: Dict[str, Dict] = {} # 発見したサービス
+        self.socket = None  # ソケット
+        self.running = False  # 実行中フラグ
+        self.thread = None  # スレッド
+        self.service_callback = service_callback  # サービスコールバック
+        self.discovered_services: Dict[str, Dict] = {}  # 発見したサービス
 
     # mDNS受信を開始
     def start(self):

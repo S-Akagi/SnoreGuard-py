@@ -23,6 +23,7 @@ UPDATE_INTERVAL_MS = 100
 
 logger = logging.getLogger(__name__)
 
+
 # アプリケーションクラス
 class SnoreGuardApp:
     def __init__(self, root: ctk.CTk):
@@ -31,16 +32,16 @@ class SnoreGuardApp:
         ctk.set_default_color_theme("blue")
         logger.debug("CustomTkinter外観設定完了")
 
-        self.root = root # ルートウィンドウ初期化
-        self.HAS_OSC = True # OSC接続有無
-        self.is_running = False # 検出中フラグ
-        self.input_devices = {} # 入力デバイス
-        self.periodicity_timer_start_time = None # 周期タイマー開始時間
-        self.is_vrchat_muted = None # VRChatミュート状態
-        self.is_awaiting_mute_sync = False # ミュート同期待機フラグ
-        self.sync_timeout_id = None # ミュート同期タイムアウトID
-        self.is_initializing = False # 初期化中フラグ
-        self.initialization_progress = 0 # 初期化進捗
+        self.root = root  # ルートウィンドウ初期化
+        self.HAS_OSC = True  # OSC接続有無
+        self.is_running = False  # 検出中フラグ
+        self.input_devices = {}  # 入力デバイス
+        self.periodicity_timer_start_time = None  # 周期タイマー開始時間
+        self.is_vrchat_muted = None  # VRChatミュート状態
+        self.is_awaiting_mute_sync = False  # ミュート同期待機フラグ
+        self.sync_timeout_id = None  # ミュート同期タイムアウトID
+        self.is_initializing = False  # 初期化中フラグ
+        self.initialization_progress = 0  # 初期化進捗
 
         # 設定マネージャー初期化
         self.settings_manager = SettingsManager(Path(SETTINGS_FILE))
@@ -76,6 +77,7 @@ class SnoreGuardApp:
 
         # UI初期化
         from snoreguard.ui import UIBuilder
+
         self.ui = UIBuilder(self)
 
         # マイクリスト更新
@@ -112,21 +114,21 @@ class SnoreGuardApp:
     # 検出開始/停止
     def toggle_detection(self):
         if self.is_running:
-            self._stop_detection() # 検出停止
+            self._stop_detection()  # 検出停止
         else:
-            self._start_detection() # 検出開始
+            self._start_detection()  # 検出開始
 
     # 検出開始
     def _start_detection(self):
         logger.debug("検出開始処理開始")
-        
+
         if self.is_initializing:
             logger.debug("初期化中のためスキップ")
             return
-            
+
         selected_mic_name = self.mic_var.get()
         logger.debug(f"選択されたマイク: {selected_mic_name}")
-        
+
         if (
             not selected_mic_name
             or (device_id := self.input_devices.get(selected_mic_name)) is None
@@ -142,62 +144,66 @@ class SnoreGuardApp:
     def _start_detection_async(self, selected_mic_name: str, device_id: int):
         self.is_initializing = True
         self.initialization_progress = 0
-        
+
         # UIを初期化中状態に更新
         self._update_control_state_initializing()
         self.status_label_var.set("初期化中")
         self.add_log("音声システムを初期化中", "system")
-        
+
         # プログレス更新を開始
         self._start_progress_animation()
-        
+
         # バックグラウンドで初期化を実行
         init_thread = threading.Thread(
             target=self._initialize_audio_system,
             args=(selected_mic_name, device_id),
-            daemon=True
+            daemon=True,
         )
         init_thread.start()
-    
+
     # 音声システムを初期化
     def _initialize_audio_system(self, selected_mic_name: str, device_id: int):
         try:
-            logger.info(f"音声システム初期化開始: {selected_mic_name} (device_id: {device_id})")
-            
+            logger.info(
+                f"音声システム初期化開始: {selected_mic_name} (device_id: {device_id})"
+            )
+
             # 設定を保存
             self._update_progress(10, "設定を保存中")
             self.app_settings["mic_device_name"] = selected_mic_name
             self._save_app_settings()
-            
+
             # 音声デバイスを準備
             self._update_progress(30, "音声デバイスを準備中")
             time.sleep(0.1)
-            
+
             # 音声ストリームを初期化
             self._update_progress(50, "音声ストリームを初期化中")
             # 音声サービスを開始（ここが重い処理）
             self.audio_service.start(device_id)
-            
+
             # 分析エンジンを準備
             self._update_progress(80, "分析エンジンを準備中")
             time.sleep(0.1)
-            
+
             # 初期化完了
             self._update_progress(100, "初期化完了")
-            
+
             # メインスレッドでUI更新
             self.root.after(0, self._finalize_detection_start, selected_mic_name)
-            
+
         except Exception as e:
             logger.error(f"音声システム初期化エラー: {e}", exc_info=True)
             self.root.after(0, self._handle_initialization_error, str(e))
-    
+
     # プログレス更新
     def _update_progress(self, progress: int, message: str):
         self.initialization_progress = progress
-        self.root.after(0, lambda: self.status_label_var.set(f"🔄 {message} ({progress}%)"))
+        self.root.after(
+            0, lambda: self.status_label_var.set(f"🔄 {message} ({progress}%)")
+        )
         self.root.after(0, lambda: self.add_log(f"{message} ({progress}%)", "system"))
-    
+
     # 検出開始の最終化
     def _finalize_detection_start(self, selected_mic_name: str):
         self.is_running = True
@@ -206,10 +212,10 @@ class SnoreGuardApp:
         self.status_label_var.set("検出中")
         self.add_log(f"検出開始 ({selected_mic_name})", "system")
         logger.info(f"音声検出開始完了: {selected_mic_name}")
-        
+
         # ビジュアル更新
         self.root.after(UPDATE_INTERVAL_MS, self._update_visuals)
-    
+
     # 初期化エラー処理
     def _handle_initialization_error(self, error_message: str):
         self.is_initializing = False
@@ -217,28 +223,37 @@ class SnoreGuardApp:
         self._update_control_state()
         self.status_label_var.set("初期化失敗")
         self.add_log(f"初期化エラー: {error_message}", "error")
-        messagebox.showerror("初期化エラー", f"音声システムの初期化に失敗しました:\n{error_message}")
-    
+        messagebox.showerror(
+            "初期化エラー", f"音声システムの初期化に失敗しました:\n{error_message}"
+        )
+
     # プログレスアニメーション
     def _start_progress_animation(self):
         self._animate_progress()
-    
+
     # プログレスアニメーション
     def _animate_progress(self):
         if self.is_initializing:
             spinner_chars = ["🔄", "🔃", "🔁", "🔀"]
             char_index = int(time.time() * 4) % len(spinner_chars)
             current_status = self.status_label_var.get()
-            if "🔄" in current_status or "🔃" in current_status or "🔁" in current_status or "🔀" in current_status:
+            if (
+                "🔄" in current_status
+                or "🔃" in current_status
+                or "🔁" in current_status
+                or "🔀" in current_status
+            ):
                 # スピナー文字を更新
                 updated_status = current_status
                 for char in spinner_chars:
-                    updated_status = updated_status.replace(char, spinner_chars[char_index])
+                    updated_status = updated_status.replace(
+                        char, spinner_chars[char_index]
+                    )
                 self.status_label_var.set(updated_status)
-            
+
             # 200ms後に再度実行
             self.root.after(200, self._animate_progress)
-    
+
     # 初期化中のUI状態更新
     def _update_control_state_initializing(self):
         """初期化中のUI状態更新"""
@@ -251,15 +266,15 @@ class SnoreGuardApp:
     # 検出停止
     def _stop_detection(self):
         logger.debug("検出停止処理開始")
-        
+
         if self.is_initializing:
             logger.info("初期化中の停止要求")
             self.is_initializing = False
             return
-        
+
         # 検出停止
         self.is_running = False
-        self.audio_service.stop() # 音声サービス停止
+        self.audio_service.stop()  # 音声サービス停止
         logger.debug("音声サービス停止")
 
         # 周期タイマーリセット
@@ -299,10 +314,11 @@ class SnoreGuardApp:
             # 通常の状態
             state = "normal" if not self.is_running else "disabled"
             self.start_button.configure(
-                state="disabled" if self.is_running else "normal", 
-                text="検出開始"
+                state="disabled" if self.is_running else "normal", text="検出開始"
             )
-            self.stop_button.configure(state="normal" if self.is_running else "disabled")
+            self.stop_button.configure(
+                state="normal" if self.is_running else "disabled"
+            )
             self.mic_combobox.configure(state=state)
             for _, _, scale in self.rule_setting_vars.values():
                 scale.configure(state=state)

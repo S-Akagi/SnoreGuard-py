@@ -8,6 +8,7 @@ from snoreguard.vrc.mdns_client import OSCQueryServiceFinder
 
 logger = logging.getLogger(__name__)
 
+
 # VRChatからのOSCメッセージを受信するクラス
 class VRChatOSCReceiver:
     # 初期化
@@ -71,6 +72,7 @@ class VRChatOSCReceiver:
             )
         if self.mute_callback:
             self.mute_callback(is_muted)
+
 
 # VRChatとのOSC通信全般を管理するクラス
 class VRCHandler:

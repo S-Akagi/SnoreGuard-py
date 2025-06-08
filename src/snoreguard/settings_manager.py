@@ -6,14 +6,15 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+
 # 設定ファイルの読み書きを管理するクラス
 class SettingsManager:
     def __init__(self, filepath: Path):
         logger.debug(f"SettingsManager初期化: {filepath}")
         self.filepath = filepath
-        self._cache: dict[str, Any] | None = None # キャッシュ
-        self._cache_lock = threading.RLock() # ロック
-        self._file_mtime: float | None = None # ファイルの変更時刻
+        self._cache: dict[str, Any] | None = None  # キャッシュ
+        self._cache_lock = threading.RLock()  # ロック
+        self._file_mtime: float | None = None  # ファイルの変更時刻
         logger.debug("SettingsManager初期化完了")
 
     # 設定をファイルから読み込む
@@ -22,13 +23,13 @@ class SettingsManager:
         with self._cache_lock:
             # ファイルの変更時刻をチェック
             if self.filepath.exists():
-                current_mtime = self.filepath.stat().st_mtime # ファイルの変更時刻
+                current_mtime = self.filepath.stat().st_mtime  # ファイルの変更時刻
 
                 # キャッシュが有効で、ファイルが変更されていない場合
                 if (
-                    self._cache is not None # キャッシュが有効
-                    and self._file_mtime is not None # ファイルの変更時刻が有効
-                    and current_mtime == self._file_mtime # ファイルの変更時刻が一致
+                    self._cache is not None  # キャッシュが有効
+                    and self._file_mtime is not None  # ファイルの変更時刻が有効
+                    and current_mtime == self._file_mtime  # ファイルの変更時刻が一致
                 ):
                     logger.debug("キャッシュから設定を返却")
                     return self._cache.copy()
@@ -36,12 +37,12 @@ class SettingsManager:
                 # ファイルを読み込んでキャッシュを更新
                 try:
                     with open(self.filepath, encoding="utf-8") as f:
-                        settings = json.load(f) # 設定を読み込む
+                        settings = json.load(f)  # 設定を読み込む
 
-                    self._cache = settings # キャッシュを更新
-                    self._file_mtime = current_mtime # ファイルの変更時刻を更新
+                    self._cache = settings  # キャッシュを更新
+                    self._file_mtime = current_mtime  # ファイルの変更時刻を更新
                     logger.info(f"設定ファイル読み込み完了: {len(settings)}個の設定")
-                    return settings.copy() # 設定を返却
+                    return settings.copy()  # 設定を返却
 
                 except (OSError, json.JSONDecodeError) as e:
                     logger.error(f"設定ファイル読み込みエラー: {e}")
@@ -49,9 +50,9 @@ class SettingsManager:
 
             # ファイルが存在しないか読み込み失敗時はデフォルトを返す
             logger.debug("デフォルト設定を使用")
-            self._cache = default_settings.copy() # デフォルト設定をキャッシュにコピー
-            self._file_mtime = None # ファイルの変更時刻をクリア
-            return default_settings.copy() # デフォルト設定を返却
+            self._cache = default_settings.copy()  # デフォルト設定をキャッシュにコピー
+            self._file_mtime = None  # ファイルの変更時刻をクリア
+            return default_settings.copy()  # デフォルト設定を返却
 
     # 設定をファイルに保存
     def save(self, settings: dict[str, Any]):
@@ -96,5 +97,5 @@ class SettingsManager:
     def clear_cache(self):
         logger.debug("設定キャッシュクリア")
         with self._cache_lock:
-            self._cache = None # キャッシュをクリア
-            self._file_mtime = None # ファイルの変更時刻をクリア
+            self._cache = None  # キャッシュをクリア
+            self._file_mtime = None  # ファイルの変更時刻をクリア

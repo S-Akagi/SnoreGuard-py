@@ -8,6 +8,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+
 def main():
     logger.debug("アプリケーション開始")
 

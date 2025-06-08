@@ -7,6 +7,7 @@ from pythonosc import udp_client
 
 logger = logging.getLogger(__name__)
 
+
 # VRChat標準OSC仕様に準拠したOSCサービス
 class OSCQueryService:
     # 初期化
@@ -21,13 +22,13 @@ class OSCQueryService:
         self.status_callback = status_callback
         self.mute_status_callback = mute_status_callback
 
-        self.is_running = False # 実行中フラグ
-        self._discovery_thread: threading.Thread | None = None # 発見スレッド
+        self.is_running = False  # 実行中フラグ
+        self._discovery_thread: threading.Thread | None = None  # 発見スレッド
 
-        self.vrchat_host: str | None = None # VRChatホスト
-        self.vrchat_osc_port: int | None = None # VRChat OSCポート
-        self.found_service = False # サービス発見フラグ
-        self.osc_client: udp_client.SimpleUDPClient | None = None # OSCクライアント
+        self.vrchat_host: str | None = None  # VRChatホスト
+        self.vrchat_osc_port: int | None = None  # VRChat OSCポート
+        self.found_service = False  # サービス発見フラグ
+        self.osc_client: udp_client.SimpleUDPClient | None = None  # OSCクライアント
         logger.debug("OSCQueryService初期化完了")
 
     # 開始
