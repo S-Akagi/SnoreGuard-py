@@ -82,7 +82,9 @@ class SnoreGuardApp:
 
         # マイクリスト更新
         self._populate_mic_list()
-        self._update_ui_with_settings()
+
+        # UI設定更新は少し遅らせて実行（UI要素が完全に準備されるまで待つ）
+        self.root.after(100, self._update_ui_with_settings)
 
         # VRChatハンドラー開始
         self.vrc_handler.start()
@@ -174,16 +176,30 @@ class SnoreGuardApp:
             self._save_app_settings()
 
             # 音声デバイスを準備
-            self._update_progress(30, "音声デバイスを準備中")
-            time.sleep(0.1)
+            self._update_progress(20, "音声デバイスを準備中")
+            # デバイスの事前テスト
+            try:
+                test_stream = sd.InputStream(
+                    samplerate=16000,
+                    device=device_id,
+                    channels=1,
+                    dtype="float32",
+                    blocksize=1600,
+                )
+                test_stream.close()
+            except Exception as e:
+                raise RuntimeError(f"オーディオデバイステストに失敗: {e}")
+
+            # 分析エンジンを事前初期化
+            self._update_progress(40, "分析エンジンを初期化中")
+            # RuleBasedProcessorの初期化時にlibrosaのプリコンパイルが実行される
 
             # 音声ストリームを初期化
-            self._update_progress(50, "音声ストリームを初期化中")
-            # 音声サービスを開始（ここが重い処理）
+            self._update_progress(70, "音声ストリームを初期化中")
             self.audio_service.start(device_id)
 
-            # 分析エンジンを準備
-            self._update_progress(80, "分析エンジンを準備中")
+            # 最終確認
+            self._update_progress(90, "システムを準備中")
             time.sleep(0.1)
 
             # 初期化完了
@@ -285,8 +301,11 @@ class SnoreGuardApp:
         )
 
         # 進捗バーリセット
-        if hasattr(self, "periodicity_progressbar"):
-            self.periodicity_progressbar.set(0)
+        try:
+            if self.periodicity_progressbar is not None:
+                self.periodicity_progressbar.set(0)
+        except (AttributeError, NameError):
+            pass
 
         # データキューリセット
         while not self.data_queue.empty():
@@ -339,12 +358,18 @@ class SnoreGuardApp:
                     1.0, elapsed / self.rule_settings.periodicity_window_seconds
                 )
                 # 進捗バーが存在する場合
-                if hasattr(self, "periodicity_progressbar"):
-                    self.periodicity_progressbar.set(progress)
+                try:
+                    if self.periodicity_progressbar is not None:
+                        self.periodicity_progressbar.set(progress)
+                except (AttributeError, NameError):
+                    pass
             else:
                 # 進捗バーが存在する場合
-                if hasattr(self, "periodicity_progressbar"):
-                    self.periodicity_progressbar.set(0)
+                try:
+                    if self.periodicity_progressbar is not None:
+                        self.periodicity_progressbar.set(0)
+                except (AttributeError, NameError):
+                    pass
 
             # データキューが空でない場合
             updated = False
@@ -374,15 +399,20 @@ class SnoreGuardApp:
     def _process_analysis_data(self, res: dict):
         self.display_mask = res.get("final_mask_frames", np.zeros(1, dtype=bool))
         pass_masks = res.get("pass_masks")
-        if pass_masks and hasattr(self, "rule_status_vars"):
-            for name, lamp_widget in self.rule_status_vars.items():
-                mask = pass_masks.get(name)
-                is_pass = np.any(mask) if mask is not None else False
-                # ランプの色を更新
-                pass_color = "#2ECC71"
-                fail_color = "#E74C3C"
+        try:
+            if pass_masks and self.rule_status_vars is not None:
+                for name, lamp_widget in self.rule_status_vars.items():
+                    mask = pass_masks.get(name)
+                    is_pass = np.any(mask) if mask is not None else False
+                    # ランプの色を更新
+                    pass_color = "#2ECC71"
+                    fail_color = "#E74C3C"
 
-                lamp_widget.configure(fg_color=pass_color if is_pass else fail_color)
+                    lamp_widget.configure(
+                        fg_color=pass_color if is_pass else fail_color
+                    )
+        except (AttributeError, NameError):
+            pass
         self._update_detailed_status(res)
 
     # プロット更新
@@ -403,7 +433,14 @@ class SnoreGuardApp:
 
     # いびき検出コールバック
     def on_snore_detected_callback(self):
-        self.root.after(0, self._handle_detection_event)
+        try:
+            self.root.after(0, self._handle_detection_event)
+        except RuntimeError as e:
+            if "main thread is not in main loop" in str(e):
+                # メインループが開始前の場合は無視
+                logger.debug("いびき検出コールバックをスキップ: メインループ開始前")
+            else:
+                raise
 
     # いびき検出イベント処理
     def _handle_detection_event(self):
@@ -482,20 +519,33 @@ class SnoreGuardApp:
                 default_device_id = None
 
                 # _InputOutputPairオブジェクトの場合
-                if hasattr(default_info, "input"):
-                    default_device_id = default_info.input
+                try:
+                    if (
+                        default_info
+                        and getattr(default_info, "input", None) is not None
+                    ):
+                        default_device_id = default_info.input
+                except (AttributeError, TypeError):
+                    pass
+
                 # タプルやリストの場合
-                elif isinstance(default_info, (list, tuple)) and len(default_info) >= 1:
+                if (
+                    default_device_id is None
+                    and isinstance(default_info, (list, tuple))
+                    and len(default_info) >= 1
+                ):
                     default_device_id = default_info[0]
                 # 単一の整数の場合
-                elif isinstance(default_info, int):
+                elif default_device_id is None and isinstance(default_info, int):
                     default_device_id = default_info
-                else:
+                # その他の場合
+                elif default_device_id is None:
                     # 他の形式の場合は、sd.default.deviceを直接使用
                     try:
                         default_device_id = (
                             sd.default.device[0]
                             if hasattr(sd.default.device, "__getitem__")
+                            or hasattr(sd.default.device, "__iter__")
                             else None
                         )
                     except Exception:
@@ -595,8 +645,11 @@ class SnoreGuardApp:
             )
             # 空のリストでUIを初期化
             self.input_devices = {}
-            if hasattr(self, "mic_combobox"):
-                self.mic_combobox.configure(values=[])
+            try:
+                if self.mic_combobox is not None:
+                    self.mic_combobox.configure(values=[])
+            except (AttributeError, NameError):
+                pass
 
     # 設定UI更新
     def _update_ui_with_settings(self):
@@ -607,8 +660,13 @@ class SnoreGuardApp:
             self.auto_mute_var.set(self.app_settings.get("auto_mute_on_snore", True))
         if rule_settings_dict := self.app_settings.get("rule_settings"):
             for key, value in rule_settings_dict.items():
-                if hasattr(self.rule_settings, key):
-                    setattr(self.rule_settings, key, value)
+                try:
+                    if getattr(self.rule_settings, key, None) is not None or hasattr(
+                        self.rule_settings, key
+                    ):
+                        setattr(self.rule_settings, key, value)
+                except (AttributeError, TypeError):
+                    pass
         self._update_rule_settings_ui()
         self._update_control_state()
 
@@ -650,7 +708,10 @@ class SnoreGuardApp:
 
     # ログ追加
     def add_log(self, message: str, level: str = "info"):
-        if not hasattr(self, "log_text") or not self.log_text.winfo_exists():
+        try:
+            if not self.log_text or not self.log_text.winfo_exists():
+                return
+        except (AttributeError, NameError, tk.TclError):
             return
         try:
             log_line = f"[{datetime.now().strftime('%H:%M:%S')}] {message}\n"
@@ -663,7 +724,14 @@ class SnoreGuardApp:
 
     # スレッドセーフなログ追加
     def add_log_threadsafe(self, message: str, level: str = "info"):
-        self.root.after(0, self.add_log, message, level)
+        try:
+            self.root.after(0, self.add_log, message, level)
+        except RuntimeError as e:
+            if "main thread is not in main loop" in str(e):
+                # メインループが開始前の場合は無視
+                logger.debug(f"ログ追加をスキップ: {message}")
+            else:
+                raise
 
     # 終了処理
     def _on_closing(self):
@@ -681,7 +749,14 @@ class SnoreGuardApp:
 
     # OSC接続状態変更通知
     def on_osc_status_change(self, is_connected: bool, message: str):
-        self.root.after(0, self._update_osc_status_ui, is_connected, message)
+        try:
+            self.root.after(0, self._update_osc_status_ui, is_connected, message)
+        except RuntimeError as e:
+            if "main thread is not in main loop" in str(e):
+                # メインループが開始前の場合は無視
+                logger.debug("OSC状態変更通知をスキップ: メインループ開始前")
+            else:
+                raise
 
     # OSC接続状態UI更新
     def _update_osc_status_ui(self, is_connected: bool, message: str):
@@ -702,7 +777,14 @@ class SnoreGuardApp:
 
     # VRChatミュート状態変更通知
     def on_vrchat_mute_change(self, is_muted: bool):
-        self.root.after(0, self._update_internal_mute_state, is_muted)
+        try:
+            self.root.after(0, self._update_internal_mute_state, is_muted)
+        except RuntimeError as e:
+            if "main thread is not in main loop" in str(e):
+                # メインループが開始前の場合は無視
+                logger.debug("VRChatミュート状態変更通知をスキップ: メインループ開始前")
+            else:
+                raise
 
     # 内部ミュート状態更新
     def _update_internal_mute_state(self, is_muted: bool):
