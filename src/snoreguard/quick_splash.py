@@ -6,26 +6,30 @@ import time
 # スプラッシュ画面クラス
 class QuickSplashScreen:
     def __init__(self):
-        self.splash_root = tk.Tk()
-        self.splash_root.title("")
-        self.splash_root.overrideredirect(True)
+        self.splash_root = tk.Tk()  # スプラッシュウィンドウ
+        self.splash_root.title("")  # タイトル
+        self.splash_root.overrideredirect(True)  # タイトルバーを非表示
 
         # サイズと位置を設定
         width = 350
         height = 200
-        x = (self.splash_root.winfo_screenwidth() // 2) - (width // 2)
-        y = (self.splash_root.winfo_screenheight() // 2) - (height // 2)
-        self.splash_root.geometry(f"{width}x{height}+{x}+{y}")
+        x = (self.splash_root.winfo_screenwidth() // 2) - (width // 2)  # 画面中央に配置
+        y = (self.splash_root.winfo_screenheight() // 2) - (
+            height // 2
+        )  # 画面中央に配置
+        self.splash_root.geometry(
+            f"{width}x{height}+{x}+{y}"
+        )  # ウィンドウサイズと位置を設定
 
-        self.splash_root.configure(bg="#1a1a1a")
-        self.splash_root.attributes("-topmost", True)
-        self._create_simple_widgets()
+        self.splash_root.configure(bg="#1a1a1a")  # 背景色
+        self.splash_root.attributes("-topmost", True)  # 最前面に表示
+        self._create_simple_widgets()  # シンプルなウィジェットを作成
 
-        self.on_initialization_complete = None
-        self.animation_running = True
-        self.progress_animation_id = None
-        self.text_animation_id = None
-        self.base_message = "起動中"
+        self.on_initialization_complete = None  # 初期化完了コールバック
+        self.animation_running = True  # アニメーション実行中フラグ
+        self.progress_animation_id = None  # プログレスアニメーションID
+        self.text_animation_id = None  # テキストアニメーションID
+        self.base_message = "起動中"  # ベースメッセージ
 
         # アニメーション開始
         self._start_animations()
@@ -112,13 +116,10 @@ class QuickSplashScreen:
 
     # ステータスメッセージを更新
     def update_status(self, message: str):
-        """ステータスメッセージを更新する（スレッドセーフ）"""
-
         def _update():
             self.base_message = message.rstrip(".")
-            # アニメーションは継続されるので、ベースメッセージを更新するだけで良い
 
-        # メインスレッドで安全に実行
+        # メインスレッドで実行
         if self.splash_root and self.splash_root.winfo_exists():
             self.splash_root.after(0, _update)
 

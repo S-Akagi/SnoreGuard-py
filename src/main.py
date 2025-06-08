@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 import logging
 import customtkinter as ctk
 import time

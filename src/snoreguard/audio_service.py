@@ -8,7 +8,6 @@ from core.rule_processor import RuleBasedProcessor
 
 logger = logging.getLogger(__name__)
 
-
 # 音声処理、いびき検出、スレッド管理を担当するクラス
 class AudioService:
     SAMPLE_RATE = 16000  # サンプリングレート

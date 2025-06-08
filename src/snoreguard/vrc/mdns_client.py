@@ -19,7 +19,7 @@ class MDNSRecord:
         self.data = data
 
 
-# 軽量mDNSクライアント実装
+# mDNSクライアント実装
 class MDNSClient:
     MDNS_PORT = 5353  # mDNSポート
     MDNS_GROUP = "224.0.0.251"  # mDNSグループ
@@ -182,6 +182,7 @@ class MDNSClient:
         original_offset = offset
         jumped = False
 
+        # 名前を解析
         while offset < len(data):
             length = data[offset]
 
@@ -213,6 +214,7 @@ class MDNSClient:
             name, offset = self._parse_name(data, offset)
 
             if offset + 10 > len(data):
+                # レコードデータの長さを超えている場合は無視
                 return None, offset
 
             rtype, rclass, ttl, rdlen = struct.unpack(
@@ -221,6 +223,7 @@ class MDNSClient:
             offset += 10
 
             if offset + rdlen > len(data):
+                # レコードデータの長さを超えている場合は無視
                 return None, offset
 
             rdata = data[offset : offset + rdlen]
@@ -286,8 +289,8 @@ class MDNSClient:
                     }
                     self.service_callback(callback_info)
 
+    # TXTレコードを解析
     def _parse_txt_record(self, data: bytes) -> Dict[str, str]:
-        # TXTレコードを解析
         result = {}
         offset = 0
 
@@ -302,32 +305,34 @@ class MDNSClient:
             if offset + length > len(data):
                 break
 
+            # TXTレコードを解析
             txt_string = data[offset : offset + length].decode("ascii", errors="ignore")
             if "=" in txt_string:
                 key, value = txt_string.split("=", 1)
                 result[key] = value
 
+            # 次のTXTレコードの位置に移動
             offset += length
 
         return result
 
 
+# OSCQueryサービス自動発見クラス
 class OSCQueryServiceFinder:
-    # OSCQueryサービス自動発見クラス
     def __init__(self, discovery_callback=None, log_callback=None):
         logger.debug("OSCQueryServiceFinder初期化")
-        self.discovery_callback = discovery_callback
-        self.log_callback = log_callback
+        self.discovery_callback = discovery_callback  # サービス発見コールバック
+        self.log_callback = log_callback  # ログコールバック
         self.mdns_client = MDNSClient(self._on_service_discovered)
-        self.query_timer = None
+        self.query_timer = None  # クエリタイマー
 
     # サービス発見を開始
     def start(self):
         try:
-            self.mdns_client.start()
-            self._start_periodic_query()
+            self.mdns_client.start()  # mDNSクライアントを開始
+            self._start_periodic_query()  # 定期的なクエリ送信を開始
             if self.log_callback:
-                self.log_callback("OSCQuery自動発見を開始 🔍", "osc")
+                self.log_callback("OSCQuery自動発見を開始", "osc")
         except Exception as e:
             if self.log_callback:
                 self.log_callback(f"OSCQuery発見開始エラー: {e}", "error")
@@ -336,14 +341,18 @@ class OSCQueryServiceFinder:
     def stop(self):
         if self.query_timer:
             self.query_timer.cancel()
-        self.mdns_client.stop()
+        self.mdns_client.stop()  # mDNSクライアントを停止
 
     # 定期的なクエリ送信を開始
     def _start_periodic_query(self):
-        self.mdns_client.query_service("_oscjson._tcp.local.")
-        self.query_timer = threading.Timer(5.0, self._start_periodic_query)
-        self.query_timer.daemon = True
-        self.query_timer.start()
+        self.mdns_client.query_service(
+            "_oscjson._tcp.local."
+        )  # OSCQueryサービスをクエリ
+        self.query_timer = threading.Timer(
+            5.0, self._start_periodic_query
+        )  # 5秒後に再起動
+        self.query_timer.daemon = True  # デーモン化
+        self.query_timer.start()  # タイマーを開始
 
     # サービス発見時のコールバック
     def _on_service_discovered(self, service_info):
@@ -354,7 +363,7 @@ class OSCQueryServiceFinder:
                 else "N/A"
             )
             port = service_info.get("osc_port", "N/A")
-            self.log_callback(f"OSCQuery発見: {ip}:{port} 🔍", "osc")
+            self.log_callback(f"OSCQuery発見: {ip}:{port}", "osc")  # ログコールバック
 
         if self.discovery_callback:
-            self.discovery_callback(service_info)
+            self.discovery_callback(service_info)  # サービス発見コールバック

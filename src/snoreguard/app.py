@@ -272,7 +272,6 @@ class SnoreGuardApp:
 
     # 初期化中のUI状態更新
     def _update_control_state_initializing(self):
-        """初期化中のUI状態更新"""
         self.start_button.configure(state="disabled", text="初期化中...")
         self.stop_button.configure(state="disabled")
         self.mic_combobox.configure(state="disabled")

@@ -3,7 +3,6 @@ from collections import deque
 from collections.abc import Callable
 from datetime import datetime, timedelta
 from typing import Any
-import warnings
 
 import librosa
 import numpy as np
@@ -13,31 +12,36 @@ from core.settings import RuleSettings, SnoreEvent
 
 logger = logging.getLogger(__name__)
 
-# Suppress Numba compilation warnings from librosa
-warnings.filterwarnings("ignore", category=UserWarning, module="numba")
-warnings.filterwarnings("ignore", category=RuntimeWarning, module="librosa")
 
-
+# ルールベースのイベント検知
 class RuleBasedProcessor:
     def __init__(self, settings: RuleSettings, callback: Callable[[], None]):
-        self.settings = settings
-        self.on_snore_detected = callback
+        self.settings = settings  # 設定
+        self.on_snore_detected = callback  # イベント検知コールバック
 
-        self.sample_rate = 16000
-        self.frame_length = 480
-        self.hop_length = 240
+        self.sample_rate = 16000  # サンプリングレート
+        self.frame_length = 480  # フレーム長
+        self.hop_length = 240  # ホップ長
 
-        self.recent_events: deque = deque(maxlen=20)
-        self.candidate_frames_info: list[dict[str, float]] = []
+        self.recent_events: deque = deque(maxlen=20)  # 最近のイベント
+        self.candidate_frames_info: list[dict[str, float]] = []  # 候補フレーム情報
 
-        # Pre-allocate arrays to avoid dynamic allocation issues
-        self.max_frames = int(self.sample_rate * 5.0 / self.hop_length)  # 5 seconds max
-        self._rms_buffer = np.zeros(self.max_frames, dtype=np.float32)
-        self._f0_buffer = np.zeros(self.max_frames, dtype=np.float32)
-        self._centroid_buffer = np.zeros(self.max_frames, dtype=np.float32)
-        self._zcr_buffer = np.zeros(self.max_frames, dtype=np.float32)
-        self._voiced_probs_buffer = np.zeros(self.max_frames, dtype=np.float32)
+        self.max_frames = int(
+            self.sample_rate * 5.0 / self.hop_length
+        )  # 5秒分のフレーム数
+        self._rms_buffer = np.zeros(self.max_frames, dtype=np.float32)  # RMSバッファ
+        self._f0_buffer = np.zeros(self.max_frames, dtype=np.float32)  # F0バッファ
+        self._centroid_buffer = np.zeros(
+            self.max_frames, dtype=np.float32
+        )  # スペクトル重心バッファ
+        self._zcr_buffer = np.zeros(
+            self.max_frames, dtype=np.float32
+        )  # ゼロ交差率バッファ
+        self._voiced_probs_buffer = np.zeros(
+            self.max_frames, dtype=np.float32
+        )  # 有声確率バッファ
 
+        # ソフトウェアフィルター
         self.sos_filter = butter(
             N=5, Wn=[80, 1600], btype="bandpass", fs=self.sample_rate, output="sos"
         )
@@ -45,27 +49,25 @@ class RuleBasedProcessor:
         self._temp_arrays: dict[str, np.ndarray] = {}
         self._init_temp_arrays()
 
-        # Pre-compile librosa functions to reduce initial delay
         self._warmup_librosa()
 
         logger.debug("RuleBasedProcessor 初期化完了")
 
     def _warmup_librosa(self):
-        """Pre-compile librosa functions with dummy data to reduce first-run delay"""
         try:
             logger.debug("librosa機能をプリコンパイル中...")
             dummy_audio = np.random.random(self.sample_rate // 10).astype(
                 np.float32
             )  # 0.1秒分
 
-            # Warm up RMS
+            # RMSのプリコンパイル
             _ = librosa.feature.rms(
                 y=dummy_audio,
                 frame_length=self.frame_length,
                 hop_length=self.hop_length,
             )
 
-            # Warm up spectral centroid
+            # スペクトル重心のプリコンパイル
             _ = librosa.feature.spectral_centroid(
                 y=dummy_audio,
                 sr=self.sample_rate,
@@ -73,14 +75,14 @@ class RuleBasedProcessor:
                 hop_length=self.hop_length,
             )
 
-            # Warm up zero crossing rate
+            # ゼロ交差率のプリコンパイル
             _ = librosa.feature.zero_crossing_rate(
                 y=dummy_audio,
                 frame_length=self.frame_length,
                 hop_length=self.hop_length,
             )
 
-            # Warm up F0 extraction (this is the heaviest operation)
+            # F0のプリコンパイル
             _ = librosa.pyin(
                 y=dummy_audio,
                 fmin=self.settings.f0_min_hz,
@@ -94,8 +96,8 @@ class RuleBasedProcessor:
         except Exception as e:
             logger.error(f"librosaプリコンパイル中にエラー: {e}")
 
+    # 一時的な配列の初期化
     def _init_temp_arrays(self):
-        """Initialize temporary arrays to prevent dynamic allocation"""
         self._temp_arrays = {
             "energy_mask": np.zeros(self.max_frames, dtype=bool),
             "f0_conf_mask": np.zeros(self.max_frames, dtype=bool),
@@ -105,15 +107,17 @@ class RuleBasedProcessor:
             "final_mask": np.zeros(self.max_frames, dtype=bool),
         }
 
+    # 周期性イベントキューのリセット
     def reset_periodicity(self):
         self.recent_events.clear()
         logger.debug("周期性イベントキューがリセットされました。")
 
+    # 音声チャンクの処理
     def process_audio_chunk(self, audio_chunk: np.ndarray) -> dict[str, Any]:
         filtered_chunk = sosfilt(self.sos_filter, audio_chunk, axis=0)
 
         try:
-            # Use safe feature extraction with error handling
+            # 特徴量抽出
             features = self._extract_features_safe(filtered_chunk)
             if not features:
                 return {}
@@ -128,7 +132,7 @@ class RuleBasedProcessor:
             logger.error(f"特徴量抽出エラー: {e}")
             return {}
 
-        # Use pre-allocated arrays for mask operations
+        # マスク操作のための事前割り当てされた配列を使用
         num_frames = len(rms)
         if num_frames > self.max_frames:
             logger.warning(
@@ -141,7 +145,7 @@ class RuleBasedProcessor:
             f0 = f0[:num_frames]
             voiced_probs = voiced_probs[:num_frames]
 
-        # Use safe array operations to avoid static_setitem errors
+        # 静的なsetitemエラーを避けるために安全な配列操作を使用
         self._temp_arrays["energy_mask"][:num_frames] = (
             rms > self.settings.energy_threshold
         )
@@ -149,7 +153,7 @@ class RuleBasedProcessor:
             voiced_probs > self.settings.f0_confidence_threshold
         )
 
-        # Safe f0 range check
+        # F0の範囲チェック
         f0_valid = np.logical_and(
             f0 > 0,
             np.logical_and(
@@ -163,7 +167,7 @@ class RuleBasedProcessor:
         )
         self._temp_arrays["zcr_mask"][:num_frames] = zcrs < self.settings.zcr_threshold
 
-        # Combine masks safely
+        # マスクを結合
         final_pass_mask = np.logical_and.reduce(
             [
                 self._temp_arrays["energy_mask"][:num_frames],
@@ -174,7 +178,7 @@ class RuleBasedProcessor:
             ]
         )
 
-        # Process segments safely
+        # セグメントの処理
         mask_changes = np.diff(
             np.concatenate(([False], final_pass_mask, [False])).astype(int)
         )
@@ -183,11 +187,10 @@ class RuleBasedProcessor:
 
         for start, end in zip(starts, ends):
             if end > start:
-                # Use list comprehension instead of array slicing for safety
                 segment_rms = [rms[i] for i in range(start, end)]
                 segment_f0 = [f0[i] for i in range(start, end)]
 
-                # Add segment info using safe operations
+                # セグメント情報を追加
                 for i in range(len(segment_rms)):
                     self.candidate_frames_info.append(
                         {"rms": float(segment_rms[i]), "f0": float(segment_f0[i])}
@@ -201,7 +204,7 @@ class RuleBasedProcessor:
             self._process_event_candidate()
             self.candidate_frames_info.clear()
 
-        # Create return masks with safe copying
+        # コピーを使用して返却マスクを作成
         pass_masks = {
             "energy": self._temp_arrays["energy_mask"][:num_frames].copy(),
             "f0_confidence": self._temp_arrays["f0_conf_mask"][:num_frames].copy(),
@@ -234,12 +237,12 @@ class RuleBasedProcessor:
             else None,
         }
 
+    # 安全な特徴量抽出
     def _extract_features_safe(self, filtered_chunk: np.ndarray) -> dict:
-        """Safely extract audio features with fallback mechanisms"""
         features = {}
 
         try:
-            # RMS extraction with error handling
+            # RMSの抽出
             rms = librosa.feature.rms(
                 y=filtered_chunk,
                 frame_length=self.frame_length,
@@ -248,8 +251,8 @@ class RuleBasedProcessor:
             features["rms"] = rms
         except Exception as e:
             logger.error(f"RMS抽出エラー: {e}")
-            # Fallback: simple energy calculation
-            hop_samples = len(filtered_chunk) // 20  # Approximate 20 frames
+            # エネルギー計算のフォールバック
+            hop_samples = len(filtered_chunk) // 20  # 20フレーム分
             rms_fallback = []
             for i in range(0, len(filtered_chunk), hop_samples):
                 window = filtered_chunk[i : i + hop_samples]
@@ -258,7 +261,7 @@ class RuleBasedProcessor:
             features["rms"] = np.array(rms_fallback, dtype=np.float32)
 
         try:
-            # Spectral centroid with error handling
+            # スペクトル重心の抽出
             spectral_centroids = librosa.feature.spectral_centroid(
                 y=filtered_chunk,
                 sr=self.sample_rate,
@@ -268,13 +271,13 @@ class RuleBasedProcessor:
             features["spectral_centroid"] = spectral_centroids
         except Exception as e:
             logger.error(f"スペクトル重心抽出エラー: {e}")
-            # Fallback: use median frequency
+            # メディアン周波数の使用
             features["spectral_centroid"] = np.full(
                 len(features.get("rms", [0])), self.sample_rate / 4, dtype=np.float32
             )
 
         try:
-            # Zero crossing rate with error handling
+            # ゼロ交差率の抽出
             zcrs = librosa.feature.zero_crossing_rate(
                 y=filtered_chunk,
                 frame_length=self.frame_length,
@@ -283,13 +286,13 @@ class RuleBasedProcessor:
             features["zcr"] = zcrs
         except Exception as e:
             logger.error(f"ゼロ交差率抽出エラー: {e}")
-            # Fallback: simple zero crossing calculation
+            # ゼロ交差率の計算のフォールバック
             features["zcr"] = np.full(
                 len(features.get("rms", [0])), 0.1, dtype=np.float32
             )
 
         try:
-            # F0 extraction with error handling
+            # F0の抽出
             f0, voiced_flag, voiced_probs = librosa.pyin(
                 y=filtered_chunk,
                 fmin=self.settings.f0_min_hz,
@@ -303,13 +306,14 @@ class RuleBasedProcessor:
             features["voiced_probs"] = voiced_probs
         except Exception as e:
             logger.error(f"F0抽出エラー: {e}")
-            # Fallback: use default values
+            # デフォルト値の使用
             rms_len = len(features.get("rms", [0]))
             features["f0"] = np.zeros(rms_len, dtype=np.float32)
             features["voiced_probs"] = np.zeros(rms_len, dtype=np.float32)
 
         return features
 
+    # イベント候補の処理
     def _process_event_candidate(self):
         num_frames = len(self.candidate_frames_info)
         if num_frames == 0:
@@ -324,7 +328,7 @@ class RuleBasedProcessor:
         ):
             return
 
-        # Use safe array creation to avoid static_setitem issues
+        # 静的なsetitemエラーを避けるために安全な配列操作を使用
         try:
             rms_list = [f["rms"] for f in self.candidate_frames_info]
             f0_list = [f["f0"] for f in self.candidate_frames_info]
@@ -349,6 +353,7 @@ class RuleBasedProcessor:
         self.recent_events.append(event)
         self._check_periodicity()
 
+    # 周期性のチェック
     def _check_periodicity(self):
         now = datetime.now()
         window_start_time = now - timedelta(
@@ -367,6 +372,7 @@ class RuleBasedProcessor:
             self.on_snore_detected()
             self.recent_events.clear()
 
+    # 詳細な統計の計算
     def _calculate_detailed_stats(
         self, analysis_results: dict, pass_masks: dict
     ) -> dict:
@@ -374,7 +380,7 @@ class RuleBasedProcessor:
         for key, values in analysis_results.items():
             if values is not None and len(values) > 0:
                 try:
-                    # Safe statistical calculation
+                    # 安全な統計計算
                     if hasattr(values, "dtype") and np.issubdtype(
                         values.dtype, np.floating
                     ):
