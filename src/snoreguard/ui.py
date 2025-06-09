@@ -7,6 +7,7 @@ import customtkinter as ctk
 import numpy as np
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure
+from snoreguard import __version__
 
 logger = logging.getLogger(__name__)
 
@@ -101,7 +102,7 @@ class UIBuilder:
         - タイトル、サイズ、背景色、グリッド設定、アイコンなどを設定
         """
         logger.debug("メインウィンドウ設定開始")
-        self.root.title("SnoreGuard Dashboard")
+        self.root.title(f"SnoreGuard Dashboard - v{__version__}")
         self.root.geometry("1280x720")
         self.root.configure(fg_color=self.COLOR_BG)
         self.root.grid_columnconfigure(0, weight=1)
@@ -175,13 +176,15 @@ class UIBuilder:
         center_column = ctk.CTkFrame(main_frame, fg_color="transparent")
         center_column.grid(row=0, column=1, sticky="nsew", padx=5)
         center_column.grid_columnconfigure(0, weight=1)
-        center_column.grid_rowconfigure(0, weight=0)  # ステータスUI
-        center_column.grid_rowconfigure(1, weight=0)  # コントロールUI
-        center_column.grid_rowconfigure(2, weight=1)  # ログUI
+        center_column.grid_rowconfigure(0, weight=0)  # 更新通知UI
+        center_column.grid_rowconfigure(1, weight=0)  # ステータスUI
+        center_column.grid_rowconfigure(2, weight=0)  # コントロールUI
+        center_column.grid_rowconfigure(3, weight=1)  # ログUI
 
-        self._create_status_card(center_column, row=0, col=0)  # ステータスUI
-        self._create_control_card(center_column, row=1, col=0)  # コントロールUI
-        self._create_log_card(center_column, row=2, col=0)  # ログUI
+        self._create_update_notification_card(center_column)  # 更新通知UI
+        self._create_status_card(center_column, row=1, col=0)  # ステータスUI
+        self._create_control_card(center_column, row=2, col=0)  # コントロールUI
+        self._create_log_card(center_column, row=3, col=0)  # ログUI
 
         # --- 右カラム ---
         right_column = ctk.CTkFrame(main_frame, fg_color="transparent")
@@ -307,6 +310,42 @@ class UIBuilder:
         )
         app.periodicity_progressbar.set(0)
         logger.debug("分析カード作成完了")
+
+    def _create_update_notification_card(self, parent):
+        """アップデート通知用のカードを作成（初期状態は非表示）"""
+
+        self.app.update_notification_frame = ctk.CTkFrame(
+            parent, fg_color="transparent"
+        )
+
+        inner_frame = ctk.CTkFrame(
+            self.app.update_notification_frame, fg_color="#0D47A1", corner_radius=8
+        )
+        inner_frame.pack(fill="x", expand=True, padx=0, pady=0)
+
+        self.app.update_label = ctk.CTkLabel(
+            inner_frame, text="", font=self.font_l, text_color="#FFFFFF"
+        )
+        self.app.update_label.pack(side="left", padx=5, pady=12)
+
+        button_frame = ctk.CTkFrame(inner_frame, fg_color="transparent")
+        button_frame.pack(side="right", padx=15, pady=12)
+
+        self.app.update_button = ctk.CTkButton(
+            button_frame, text="GitHub", width=50, height=32, font=self.font_m
+        )
+        self.app.update_button.pack(side="left", padx=(0, 5))
+
+        self.app.booth_button = ctk.CTkButton(
+            button_frame,
+            text="Booth",
+            width=50,
+            height=32,
+            font=self.font_m,
+            fg_color="#FF6B35",
+            hover_color="#E55A2B",
+        )
+        self.app.booth_button.pack(side="left")
 
     def _create_status_card(self, parent, row, col):
         """
