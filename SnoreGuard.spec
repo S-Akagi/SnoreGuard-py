@@ -12,6 +12,7 @@ block_cipher = None
 added_files = [
     (str(project_root / 'src/assets/icon/icon.ico'), 'assets/icon/'),
     (str(project_root / 'src/assets/icon/icon.gif'), 'assets/icon/'),
+    (str(project_root / 'pyproject.toml'), '.'),
 ]
 
 a = Analysis(
