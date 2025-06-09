@@ -18,6 +18,9 @@ from snoreguard.audio_service import AudioService
 from snoreguard.settings_manager import SettingsManager
 from snoreguard.vrc.handler import VRCHandler
 
+from snoreguard import __version__
+from snoreguard.updater import Updater
+
 
 class ThreadSafeHandler:
     """スレッドセーフな処理を統一管理"""
@@ -69,6 +72,9 @@ class SnoreGuardApp:
         self.settings_manager = SettingsManager(Path(SETTINGS_FILE))
         self.app_settings = self.settings_manager.load(self._get_default_settings())
 
+        # アップデーター初期化
+        self.updater = Updater(current_version=__version__)
+
         # ルール設定初期化
         self.rule_settings = RuleSettings()
 
@@ -115,6 +121,11 @@ class SnoreGuardApp:
         # ウィンドウクローズ時の処理
         self.root.protocol("WM_DELETE_WINDOW", self._on_closing)
         logger.debug("SnoreGuardApp初期化完了")
+
+        update_thread = threading.Thread(
+            target=self._check_for_updates_background, daemon=True
+        )
+        update_thread.start()
 
     def _init_tk_variables(self):
         """アプリ内で使用するTkinter変数を初期化"""
@@ -816,3 +827,48 @@ class SnoreGuardApp:
             if not success:
                 self.add_log("ミュート同期がタイムアウトしました。", "warning")
             self.is_awaiting_mute_sync = False
+
+    def _check_for_updates_background(self):
+        """バックグラウンドでアップデートを確認する"""
+        logger.info("バックグラウンドでアップデートチェックを実行します。")
+        # ネットワーク接続を待つため、少し待機
+        time.sleep(5)
+        update_info = self.updater.check_for_updates()
+        if update_info:
+            # UIの更新はメインスレッドで行う必要があるため、ThreadSafeHandler経由で呼び出す
+            ThreadSafeHandler.safe_after(
+                self.root, self._show_update_notification, update_info
+            )
+
+    def _show_update_notification(self, update_info: dict):
+        """アップデート通知UIを表示する（メインスレッドから呼び出される）"""
+        try:
+            # UI要素が存在するか確認
+            if not all(
+                hasattr(self, attr)
+                for attr in [
+                    "update_label",
+                    "update_button",
+                    "booth_button",
+                    "update_notification_frame",
+                ]
+            ):
+                logger.warning("アップデート通知用のUI要素が見つかりません。")
+                return
+
+            logger.info("アップデート通知を表示します。")
+            new_version = update_info.get("latest_version")
+            self.update_label.configure(
+                text=f"新しいバージョン {new_version} が利用可能です！"
+            )
+            self.update_button.configure(command=self.updater.open_release_page)
+            self.booth_button.configure(command=self.updater.open_booth_page)
+
+            # フレームをグリッドに配置して表示状態にする
+            self.update_notification_frame.grid(
+                row=0, column=0, sticky="ew", padx=5, pady=(5, 0)
+            )
+        except Exception as e:
+            logger.error(
+                f"アップデート通知の表示中にエラーが発生しました: {e}", exc_info=True
+            )
