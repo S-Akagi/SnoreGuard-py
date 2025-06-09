@@ -8,7 +8,7 @@ if exist "build" rmdir /s /q "build"
 if exist "dist" rmdir /s /q "dist"
 
 echo Building with spec file...
-pyinstaller SnoreGuard.spec --clean
+uv run pyinstaller SnoreGuard.spec --clean
 
 echo Build completed!
 echo The executable is located in: dist/SnoreGuard.exe
