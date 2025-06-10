@@ -189,9 +189,11 @@ class UIBuilder:
         # --- 右カラム ---
         right_column = ctk.CTkFrame(main_frame, fg_color="transparent")
         right_column.grid(row=0, column=2, sticky="nsew", padx=(5, 0))
-        right_column.grid_rowconfigure(0, weight=1)
+        right_column.grid_rowconfigure(0, weight=1)  # 設定UI
+        right_column.grid_rowconfigure(1, weight=0)  # タイムスケジューラーUI
         right_column.grid_columnconfigure(0, weight=1)
         self._create_settings_card(right_column, row=0, col=0)  # 設定UI
+        self._create_time_scheduler_card(right_column, row=1, col=0)  # タイムスケジューラーUI
 
     def _create_card_frame(self, parent, title, col=0, row=0, **kwargs):
         """
@@ -497,6 +499,116 @@ class UIBuilder:
             )
             slider.grid(row=1, column=0, sticky="ew", padx=5)
             app.rule_setting_vars[name] = (var, val_label_var, slider)
+
+    def _create_time_scheduler_card(self, parent, row, col):
+        """
+        タイムスケジューラー設定用のカードを作成
+        """
+        app = self.app
+        card = self._create_card_frame(parent, "タイムスケジューラー", col, row)
+        
+        # 有効化チェックボックス
+        app.scheduler_enabled_var = tk.BooleanVar()
+        scheduler_checkbox = ctk.CTkCheckBox(
+            card,
+            text="自動スケジューラーを有効化",
+            variable=app.scheduler_enabled_var,
+            command=self._on_scheduler_setting_change,
+            font=self.font_m
+        )
+        scheduler_checkbox.grid(row=1, column=0, sticky="w", padx=10, pady=(10, 5))
+        
+        # 時刻設定フレーム
+        time_frame = ctk.CTkFrame(card, fg_color="transparent")
+        time_frame.grid(row=2, column=0, sticky="ew", padx=10, pady=5)
+        time_frame.grid_columnconfigure(1, weight=1)
+        time_frame.grid_columnconfigure(3, weight=1)
+        
+        # 開始時刻
+        ctk.CTkLabel(
+            time_frame, text="開始時刻:", font=self.font_m, text_color=self.COLOR_TEXT_2
+        ).grid(row=0, column=0, sticky="w", padx=(0, 5))
+        
+        app.scheduler_start_time_var = tk.StringVar(value="22:00")
+        start_time_entry = ctk.CTkEntry(
+            time_frame,
+            textvariable=app.scheduler_start_time_var,
+            placeholder_text="HH:MM",
+            width=80,
+            font=self.font_m
+        )
+        start_time_entry.grid(row=0, column=1, sticky="w", padx=(0, 15))
+        start_time_entry.bind("<FocusOut>", lambda e: self._on_scheduler_setting_change())
+        
+        # 終了時刻
+        ctk.CTkLabel(
+            time_frame, text="終了時刻:", font=self.font_m, text_color=self.COLOR_TEXT_2
+        ).grid(row=0, column=2, sticky="w", padx=(0, 5))
+        
+        app.scheduler_end_time_var = tk.StringVar(value="06:00")
+        end_time_entry = ctk.CTkEntry(
+            time_frame,
+            textvariable=app.scheduler_end_time_var,
+            placeholder_text="HH:MM",
+            width=80,
+            font=self.font_m
+        )
+        end_time_entry.grid(row=0, column=3, sticky="w")
+        end_time_entry.bind("<FocusOut>", lambda e: self._on_scheduler_setting_change())
+        
+        # ステータス更新タイマー開始
+        self._update_scheduler_status()
+        
+    def _on_scheduler_setting_change(self):
+        """タイムスケジューラー設定変更時の処理"""
+        try:
+            enabled = self.app.scheduler_enabled_var.get()
+            start_time = self.app.scheduler_start_time_var.get()
+            end_time = self.app.scheduler_end_time_var.get()
+            
+            # 時刻フォーマットの簡単な検証
+            if enabled:
+                import re
+                time_pattern = r'^([01]?[0-9]|2[0-3]):[0-5][0-9]$'
+                if not re.match(time_pattern, start_time) or not re.match(time_pattern, end_time):
+                    self.app.add_log("時刻フォーマットが正しくありません (HH:MM)", "warning")
+                    return
+            
+            # アプリケーションの設定を更新
+            self.app.update_time_scheduler_settings(enabled, start_time, end_time)
+            self._update_scheduler_status()
+            
+        except Exception as e:
+            logger.error(f"スケジューラー設定変更エラー: {e}", exc_info=True)
+            self.app.add_log(f"スケジューラー設定エラー: {e}", "error")
+    
+    def _update_scheduler_status(self):
+        """スケジューラーステータス表示を更新"""
+        try:
+            status = self.app.get_time_scheduler_status()
+            next_action = self.app.get_time_scheduler_next_action()
+            
+            if status["enabled"]:
+                if status["running"]:
+                    status_text = f"有効 ({status['start_time']}-{status['end_time']})"
+                else:
+                    status_text = "有効 (設定エラー)"
+            else:
+                status_text = "無効"
+            
+            self.app.scheduler_status_var.set(status_text)
+            
+            if next_action:
+                action_text = f"次の{next_action['action']}: {next_action['relative_time']}"
+                self.app.scheduler_next_action_var.set(action_text)
+            else:
+                self.app.scheduler_next_action_var.set("")
+            
+            # 30秒後に再更新
+            self.root.after(30000, self._update_scheduler_status)
+            
+        except Exception as e:
+            logger.error(f"スケジューラーステータス更新エラー: {e}", exc_info=True)
 
     def _init_plots(self):
         """
