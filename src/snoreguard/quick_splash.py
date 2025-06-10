@@ -28,7 +28,12 @@ class QuickSplashScreen:
         )  # ウィンドウサイズと位置を設定
 
         self.splash_root.configure(bg="#1a1a1a")  # 背景色
-        self.splash_root.attributes("-topmost", True)  # 最前面に表示
+        
+        # 起動時にトップに表示するが、フォーカスは奪わない
+        self.splash_root.attributes("-topmost", True)
+        self.splash_root.focus_set()  # 一度フォーカスを設定
+        self.splash_root.after(100, self._setup_focus_behavior)  # 少し遅延してフォーカス処理
+        
         self._create_simple_widgets()  # シンプルなウィジェットを作成
 
         self.on_initialization_complete = None  # 初期化完了コールバック
@@ -39,6 +44,27 @@ class QuickSplashScreen:
 
         # アニメーション開始
         self._start_animations()
+    
+    def _setup_focus_behavior(self):
+        """フォーカス動作を設定"""
+        # フォーカスを元の場所に戻す
+        self.splash_root.lower()  # 一度背面に移動
+        self.splash_root.lift()   # 再び前面に移動（フォーカスなし）
+        
+        # フォーカスアウトイベントをバインド
+        self.splash_root.bind("<FocusOut>", self._on_focus_out)
+        self.splash_root.bind("<Button-1>", self._on_click)
+    
+    def _on_focus_out(self, event):
+        """フォーカスが外れた時の処理"""
+        # topmostを無効にして通常のウィンドウ動作にする
+        self.splash_root.attributes("-topmost", False)
+    
+    def _on_click(self, event):
+        """クリック時の処理 - フォーカスを取得"""
+        # クリックされた場合のみ再度topmostを有効にする
+        self.splash_root.attributes("-topmost", True)
+        self.splash_root.after(100, lambda: self.splash_root.attributes("-topmost", False))
 
     def _create_simple_widgets(self):
         """
