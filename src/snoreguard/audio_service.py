@@ -18,9 +18,9 @@ class AudioService:
     """
 
     SAMPLE_RATE = 16000  # サンプリングレート
-    VIZ_CHUNK_SIZE = 1600  # 0.1秒
+    VIZ_CHUNK_SIZE = 800  # 0.05秒
     ANALYSIS_CHUNK_DURATION_S = 1.0  # 分析チャンクの長さ
-    N_FFT = 480  # FFTのサイズ
+    N_FFT = 512  # FFTのサイズ
 
     _spectrum_buffer: np.ndarray | None = None  # スペクトラムバッファ
     _fft_buffer: np.ndarray | None = None  # FFTバッファ

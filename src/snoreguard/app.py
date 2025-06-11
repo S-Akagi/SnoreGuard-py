@@ -45,7 +45,7 @@ class ThreadSafeHandler:
 
 
 SETTINGS_FILE = "snore_guard_settings.json"
-UPDATE_INTERVAL_MS = 100
+UPDATE_INTERVAL_MS = 50
 
 logger = logging.getLogger(__name__)
 
@@ -80,7 +80,7 @@ class SnoreGuardApp:
         self.rule_settings = RuleSettings()
 
         # データキュー初期化
-        self.data_queue = queue.Queue(maxsize=10)
+        self.data_queue = queue.Queue(maxsize=25)
 
         # 表示バッファ初期化
         self.display_buffer = np.zeros(AudioService.SAMPLE_RATE, dtype=np.float32)
