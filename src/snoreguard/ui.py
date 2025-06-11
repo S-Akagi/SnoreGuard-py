@@ -521,55 +521,126 @@ class UIBuilder:
         # 時刻設定フレーム
         time_frame = ctk.CTkFrame(card, fg_color="transparent")
         time_frame.grid(row=2, column=0, sticky="ew", padx=10, pady=5)
+        
+        # 開始時刻セクション
+        start_section = ctk.CTkFrame(time_frame, fg_color=("gray90", "gray20"), corner_radius=8)
+        start_section.grid(row=0, column=0, sticky="ew", padx=(0, 10))
+        
+        ctk.CTkLabel(
+            start_section, text="開始", font=self.font_s, text_color=self.COLOR_TEXT_2
+        ).grid(row=0, column=0, columnspan=3, pady=(5, 2))
+        
+        # 開始時刻コンテナ
+        start_time_container = ctk.CTkFrame(start_section, fg_color="transparent")
+        start_time_container.grid(row=1, column=0, columnspan=3, padx=8, pady=(0, 8))
+        
+        # デフォルト値をTimeSchedulerSettingsから取得
+        from core.settings import TimeSchedulerSettings
+        defaults = TimeSchedulerSettings()
+        start_hour, start_minute = defaults.start_time.split(":")
+        
+        app.scheduler_start_hour_var = tk.StringVar(value=f"{int(start_hour):02d}")
+        start_hour_spin = ctk.CTkOptionMenu(
+            start_time_container,
+            variable=app.scheduler_start_hour_var,
+            values=[f"{i:02d}" for i in range(24)],
+            width=45,
+            height=32,
+            font=self.font_m,
+            fg_color=("gray80", "gray30"),
+            button_color=("gray70", "gray40"),
+            button_hover_color=("gray60", "gray50"),
+            command=lambda x: self._on_scheduler_setting_change()
+        )
+        start_hour_spin.grid(row=0, column=0, padx=(0, 3))
+        
+        ctk.CTkLabel(
+            start_time_container, text=":", 
+            font=("Arial", 16, "bold"), 
+            text_color=self.COLOR_TEXT_1
+        ).grid(row=0, column=1, padx=2)
+        
+        app.scheduler_start_minute_var = tk.StringVar(value=f"{int(start_minute):02d}")
+        start_minute_spin = ctk.CTkOptionMenu(
+            start_time_container,
+            variable=app.scheduler_start_minute_var,
+            values=[f"{i:02d}" for i in range(0, 60, 5)],
+            width=45,
+            height=32,
+            font=self.font_m,
+            fg_color=("gray80", "gray30"),
+            button_color=("gray70", "gray40"),
+            button_hover_color=("gray60", "gray50"),
+            command=lambda x: self._on_scheduler_setting_change()
+        )
+        start_minute_spin.grid(row=0, column=2, padx=(3, 0))
+        
+        # 終了時刻セクション
+        end_section = ctk.CTkFrame(time_frame, fg_color=("gray90", "gray20"), corner_radius=8)
+        end_section.grid(row=0, column=1, sticky="ew", padx=(10, 0))
+        
+        ctk.CTkLabel(
+            end_section, text="終了", font=self.font_s, text_color=self.COLOR_TEXT_2
+        ).grid(row=0, column=0, columnspan=3, pady=(5, 2))
+        
+        # 終了時刻コンテナ
+        end_time_container = ctk.CTkFrame(end_section, fg_color="transparent")
+        end_time_container.grid(row=1, column=0, columnspan=3, padx=8, pady=(0, 8))
+        
+        end_hour, end_minute = defaults.end_time.split(":")
+        app.scheduler_end_hour_var = tk.StringVar(value=f"{int(end_hour):02d}")
+        end_hour_spin = ctk.CTkOptionMenu(
+            end_time_container,
+            variable=app.scheduler_end_hour_var,
+            values=[f"{i:02d}" for i in range(24)],
+            width=45,
+            height=32,
+            font=self.font_m,
+            fg_color=("gray80", "gray30"),
+            button_color=("gray70", "gray40"),
+            button_hover_color=("gray60", "gray50"),
+            command=lambda x: self._on_scheduler_setting_change()
+        )
+        end_hour_spin.grid(row=0, column=0, padx=(0, 3))
+        
+        ctk.CTkLabel(
+            end_time_container, text=":", 
+            font=("Arial", 16, "bold"), 
+            text_color=self.COLOR_TEXT_1
+        ).grid(row=0, column=1, padx=2)
+        
+        app.scheduler_end_minute_var = tk.StringVar(value=f"{int(end_minute):02d}")
+        end_minute_spin = ctk.CTkOptionMenu(
+            end_time_container,
+            variable=app.scheduler_end_minute_var,
+            values=[f"{i:02d}" for i in range(0, 60, 5)],
+            width=45,
+            height=32,
+            font=self.font_m,
+            fg_color=("gray80", "gray30"),
+            button_color=("gray70", "gray40"),
+            button_hover_color=("gray60", "gray50"),
+            command=lambda x: self._on_scheduler_setting_change()
+        )
+        end_minute_spin.grid(row=0, column=2, padx=(3, 0))
+        
+        # グリッド設定
+        time_frame.grid_columnconfigure(0, weight=1)
         time_frame.grid_columnconfigure(1, weight=1)
-        time_frame.grid_columnconfigure(3, weight=1)
-        
-        # 開始時刻
-        ctk.CTkLabel(
-            time_frame, text="開始時刻:", font=self.font_m, text_color=self.COLOR_TEXT_2
-        ).grid(row=0, column=0, sticky="w", padx=(0, 5))
-        
-        app.scheduler_start_time_var = tk.StringVar(value="22:00")
-        start_time_entry = ctk.CTkEntry(
-            time_frame,
-            textvariable=app.scheduler_start_time_var,
-            placeholder_text="HH:MM",
-            width=80,
-            font=self.font_m
-        )
-        start_time_entry.grid(row=0, column=1, sticky="w", padx=(0, 15))
-        start_time_entry.bind("<FocusOut>", lambda e: self._on_scheduler_setting_change())
-        
-        # 終了時刻
-        ctk.CTkLabel(
-            time_frame, text="終了時刻:", font=self.font_m, text_color=self.COLOR_TEXT_2
-        ).grid(row=0, column=2, sticky="w", padx=(0, 5))
-        
-        app.scheduler_end_time_var = tk.StringVar(value="06:00")
-        end_time_entry = ctk.CTkEntry(
-            time_frame,
-            textvariable=app.scheduler_end_time_var,
-            placeholder_text="HH:MM",
-            width=80,
-            font=self.font_m
-        )
-        end_time_entry.grid(row=0, column=3, sticky="w")
-        end_time_entry.bind("<FocusOut>", lambda e: self._on_scheduler_setting_change())
         
     def _on_scheduler_setting_change(self):
         """タイムスケジューラー設定変更時の処理"""
         try:
             enabled = self.app.scheduler_enabled_var.get()
-            start_time = self.app.scheduler_start_time_var.get()
-            end_time = self.app.scheduler_end_time_var.get()
             
-            # 時刻フォーマットの簡単な検証
-            if enabled:
-                import re
-                time_pattern = r'^([01]?[0-9]|2[0-3]):[0-5][0-9]$'
-                if not re.match(time_pattern, start_time) or not re.match(time_pattern, end_time):
-                    self.app.add_log("時刻フォーマットが正しくありません (HH:MM)", "warning")
-                    return
+            # スピンボックスから時刻を取得（StringVarから文字列として）
+            start_hour = self.app.scheduler_start_hour_var.get()
+            start_minute = self.app.scheduler_start_minute_var.get()
+            end_hour = self.app.scheduler_end_hour_var.get()
+            end_minute = self.app.scheduler_end_minute_var.get()
+            
+            start_time = f"{start_hour}:{start_minute}"
+            end_time = f"{end_hour}:{end_minute}"
             
             # アプリケーションの設定を更新
             self.app.update_time_scheduler_settings(enabled, start_time, end_time)

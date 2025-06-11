@@ -13,7 +13,7 @@ import customtkinter as ctk
 import numpy as np
 import sounddevice as sd
 
-from core.settings import RuleSettings
+from core.settings import RuleSettings, TimeSchedulerSettings
 from snoreguard.audio_service import AudioService
 from snoreguard.settings_manager import SettingsManager
 from snoreguard.time_scheduler import TimeScheduler
@@ -155,11 +155,7 @@ class SnoreGuardApp:
             "audio_notification_enabled": True,
             "auto_mute_on_snore": self.HAS_OSC,
             "rule_settings": asdict(RuleSettings()),
-            "time_scheduler": {
-                "enabled": False,
-                "start_time": "22:00",
-                "end_time": "06:00"
-            }
+            "time_scheduler": asdict(TimeSchedulerSettings())
         }
 
     def toggle_detection(self):
@@ -996,14 +992,40 @@ class SnoreGuardApp:
     def _update_scheduler_settings_ui(self):
         """タイムスケジューラー設定UIを更新"""
         try:
-            scheduler_settings = self.app_settings.get("time_scheduler", {})
+            scheduler_settings = self.app_settings.get("time_scheduler", asdict(TimeSchedulerSettings()))
             
+            # 有効/無効設定
             if hasattr(self, 'scheduler_enabled_var'):
                 self.scheduler_enabled_var.set(scheduler_settings.get("enabled", False))
-            if hasattr(self, 'scheduler_start_time_var'):
-                self.scheduler_start_time_var.set(scheduler_settings.get("start_time", "22:00"))
-            if hasattr(self, 'scheduler_end_time_var'):
-                self.scheduler_end_time_var.set(scheduler_settings.get("end_time", "06:00"))
+            
+            # 時刻設定の読み込み（2桁フォーマット対応）
+            self._set_time_spinboxes(
+                scheduler_settings.get("start_time", "22:00"),
+                scheduler_settings.get("end_time", "06:00")
+            )
                 
         except Exception as e:
             logger.error(f"スケジューラー設定UI更新エラー: {e}", exc_info=True)
+    
+    def _set_time_spinboxes(self, start_time: str, end_time: str):
+        """時刻スピンボックスに値を設定（2桁フォーマット保証）"""
+        try:
+            # 開始時刻
+            start_hour, start_minute = start_time.split(":")
+            if hasattr(self, 'scheduler_start_hour_var'):
+                self.scheduler_start_hour_var.set(f"{int(start_hour):02d}")
+            if hasattr(self, 'scheduler_start_minute_var'):
+                self.scheduler_start_minute_var.set(f"{int(start_minute):02d}")
+            
+            # 終了時刻
+            end_hour, end_minute = end_time.split(":")
+            if hasattr(self, 'scheduler_end_hour_var'):
+                self.scheduler_end_hour_var.set(f"{int(end_hour):02d}")
+            if hasattr(self, 'scheduler_end_minute_var'):
+                self.scheduler_end_minute_var.set(f"{int(end_minute):02d}")
+                
+        except (ValueError, AttributeError) as e:
+            logger.warning(f"時刻設定パース失敗、デフォルト値を使用: {e}")
+            # デフォルト値（TimeSchedulerSettingsから取得）
+            defaults = TimeSchedulerSettings()
+            self._set_time_spinboxes(defaults.start_time, defaults.end_time)
