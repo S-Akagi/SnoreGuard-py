@@ -56,6 +56,7 @@ class FeatureExtractor:
             return librosa.feature.spectral_centroid(
                 y=audio_chunk,
                 sr=self.sample_rate,
+                n_fft=self.frame_length,
                 hop_length=self.hop_length,
             )[0]
         except Exception as e:
