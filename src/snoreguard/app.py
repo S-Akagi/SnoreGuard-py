@@ -44,7 +44,18 @@ class ThreadSafeHandler:
         ThreadSafeHandler.safe_after(root, add_log_func, message, level)
 
 
-SETTINGS_FILE = "snore_guard_settings.json"
+def _get_settings_file_path():
+    """
+    設定ファイルのパスを取得（ユーザーディレクトリ）
+    """
+    app_data = Path.home() / "AppData" / "Roaming"
+    settings_dir = app_data / "SnoreGuard"
+    settings_dir.mkdir(parents=True, exist_ok=True)
+    
+    return settings_dir / "snore_guard_settings.json"
+
+
+SETTINGS_FILE = _get_settings_file_path()
 UPDATE_INTERVAL_MS = 50
 
 logger = logging.getLogger(__name__)
