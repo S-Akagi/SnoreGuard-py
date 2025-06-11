@@ -13,9 +13,10 @@ import customtkinter as ctk
 import numpy as np
 import sounddevice as sd
 
-from core.settings import RuleSettings
+from core.settings import RuleSettings, TimeSchedulerSettings
 from snoreguard.audio_service import AudioService
 from snoreguard.settings_manager import SettingsManager
+from snoreguard.time_scheduler import TimeScheduler
 from snoreguard.vrc.handler import VRCHandler
 
 from snoreguard import __version__
@@ -43,8 +44,19 @@ class ThreadSafeHandler:
         ThreadSafeHandler.safe_after(root, add_log_func, message, level)
 
 
-SETTINGS_FILE = "snore_guard_settings.json"
-UPDATE_INTERVAL_MS = 100
+def _get_settings_file_path():
+    """
+    設定ファイルのパスを取得（ユーザーディレクトリ）
+    """
+    app_data = Path.home() / "AppData" / "Roaming"
+    settings_dir = app_data / "SnoreGuard"
+    settings_dir.mkdir(parents=True, exist_ok=True)
+
+    return settings_dir / "snore_guard_settings.json"
+
+
+SETTINGS_FILE = _get_settings_file_path()
+UPDATE_INTERVAL_MS = 50
 
 logger = logging.getLogger(__name__)
 
@@ -79,7 +91,7 @@ class SnoreGuardApp:
         self.rule_settings = RuleSettings()
 
         # データキュー初期化
-        self.data_queue = queue.Queue(maxsize=10)
+        self.data_queue = queue.Queue(maxsize=25)
 
         # 表示バッファ初期化
         self.display_buffer = np.zeros(AudioService.SAMPLE_RATE, dtype=np.float32)
@@ -103,6 +115,12 @@ class SnoreGuardApp:
             self.add_log_threadsafe,
         )
 
+        # タイムスケジューラー初期化
+        self.time_scheduler = TimeScheduler(
+            start_callback=self._scheduler_start_detection,
+            stop_callback=self._scheduler_stop_detection,
+        )
+
         # UI初期化
         from snoreguard.ui import UIBuilder
 
@@ -117,6 +135,10 @@ class SnoreGuardApp:
         # VRChatハンドラー開始
         self.vrc_handler.start()
         logger.debug("VRCハンドラー開始")
+
+        # タイムスケジューラー開始
+        self._start_time_scheduler_if_enabled()
+        logger.debug("タイムスケジューラー初期化完了")
 
         # ウィンドウクローズ時の処理
         self.root.protocol("WM_DELETE_WINDOW", self._on_closing)
@@ -144,6 +166,7 @@ class SnoreGuardApp:
             "audio_notification_enabled": True,
             "auto_mute_on_snore": self.HAS_OSC,
             "rule_settings": asdict(RuleSettings()),
+            "time_scheduler": asdict(TimeSchedulerSettings()),
         }
 
     def toggle_detection(self):
@@ -704,6 +727,7 @@ class SnoreGuardApp:
                 except (AttributeError, TypeError):
                     pass
         self._update_rule_settings_ui()
+        self._update_scheduler_settings_ui()
         self._update_control_state()
 
     def _save_app_settings(self, *args):
@@ -714,6 +738,30 @@ class SnoreGuardApp:
             self.app_settings["auto_mute_on_snore"] = self.auto_mute_var.get()
         self.app_settings["rule_settings"] = asdict(self.rule_settings)
         self.settings_manager.save(self.app_settings)
+
+    def reset_settings(self):
+        """設定をデフォルト値にリセット"""
+        try:
+            # デフォルト設定を取得
+            default_settings = self._get_default_settings()
+
+            # 設定を更新
+            self.app_settings = default_settings
+            self.rule_settings = RuleSettings()
+            self.time_scheduler_settings = TimeSchedulerSettings()
+
+            # UIを更新
+            self._update_rule_settings_ui()
+            self._update_scheduler_settings_ui()
+
+            # 設定を保存
+            self.settings_manager.save(self.app_settings)
+
+            self.add_log("設定をデフォルト値にリセットしました", "info")
+
+        except Exception as e:
+            logger.error(f"設定リセット中にエラー: {e}", exc_info=True)
+            self.add_log(f"設定リセットエラー: {e}", "error")
 
     def _update_detailed_status(self, res: dict):
         """詳細ステータス更新"""
@@ -771,6 +819,11 @@ class SnoreGuardApp:
         if self.HAS_OSC:
             logger.debug("VRCハンドラーを停止中")
             self.vrc_handler.stop()
+        # タイムスケジューラー停止
+        if hasattr(self, "time_scheduler"):
+            self.time_scheduler.stop()
+            logger.debug("タイムスケジューラー停止完了")
+
         self._save_app_settings()
         logger.debug("設定保存完了")
         self.root.destroy()
@@ -872,3 +925,140 @@ class SnoreGuardApp:
             logger.error(
                 f"アップデート通知の表示中にエラーが発生しました: {e}", exc_info=True
             )
+
+    # タイムスケジューラー関連メソッド
+    def _scheduler_start_detection(self):
+        """スケジューラーからの検出開始要求"""
+        logger.info("スケジューラーによる自動検出開始")
+        self.add_log_threadsafe(
+            "スケジューラーにより自動で検出を開始します", "scheduler"
+        )
+
+        # メインスレッドで実行
+        ThreadSafeHandler.safe_after(self.root, self._start_detection)
+
+    def _scheduler_stop_detection(self):
+        """スケジューラーからの検出停止要求"""
+        logger.info("スケジューラーによる自動検出停止")
+        self.add_log_threadsafe(
+            "スケジューラーにより自動で検出を停止します", "scheduler"
+        )
+
+        # メインスレッドで実行
+        ThreadSafeHandler.safe_after(self.root, self._stop_detection)
+
+    def _start_time_scheduler_if_enabled(self):
+        """設定に応じてタイムスケジューラーを開始"""
+        scheduler_settings = self.app_settings.get("time_scheduler", {})
+
+        if scheduler_settings.get("enabled", False):
+            try:
+                from datetime import time as dt_time
+
+                start_time_str = scheduler_settings.get("start_time", "22:00")
+                end_time_str = scheduler_settings.get("end_time", "06:00")
+
+                # 時刻文字列をパース
+                start_hour, start_minute = map(int, start_time_str.split(":"))
+                end_hour, end_minute = map(int, end_time_str.split(":"))
+
+                start_time = dt_time(start_hour, start_minute)
+                end_time = dt_time(end_hour, end_minute)
+
+                # スケジューラー設定
+                self.time_scheduler.configure(
+                    enabled=True, start_time=start_time, end_time=end_time
+                )
+
+                self.time_scheduler.start()
+                logger.info(
+                    f"タイムスケジューラー開始: {start_time_str}-{end_time_str}"
+                )
+                self.add_log("タイムスケジューラーが有効になりました", "scheduler")
+
+            except Exception as e:
+                logger.error(f"タイムスケジューラー開始エラー: {e}", exc_info=True)
+                self.add_log(f"タイムスケジューラー開始エラー: {e}", "error")
+
+    def update_time_scheduler_settings(
+        self, enabled: bool, start_time: str, end_time: str
+    ):
+        """タイムスケジューラー設定を更新"""
+        try:
+            # 設定を保存
+            self.app_settings["time_scheduler"] = {
+                "enabled": enabled,
+                "start_time": start_time,
+                "end_time": end_time,
+            }
+            self._save_app_settings()
+
+            if enabled:
+                from datetime import time as dt_time
+
+                # 時刻文字列をパース
+                start_hour, start_minute = map(int, start_time.split(":"))
+                end_hour, end_minute = map(int, end_time.split(":"))
+
+                start_time_obj = dt_time(start_hour, start_minute)
+                end_time_obj = dt_time(end_hour, end_minute)
+
+                # スケジューラー設定更新
+                self.time_scheduler.configure(
+                    enabled=True, start_time=start_time_obj, end_time=end_time_obj
+                )
+
+                self.time_scheduler.start()
+                logger.info(f"タイムスケジューラー更新: {start_time}-{end_time}")
+                self.add_log("タイムスケジューラー設定が更新されました", "scheduler")
+            else:
+                self.time_scheduler.stop()
+                logger.info("タイムスケジューラー無効化")
+                self.add_log("タイムスケジューラーが無効化されました", "scheduler")
+
+        except Exception as e:
+            logger.error(f"タイムスケジューラー設定更新エラー: {e}", exc_info=True)
+            self.add_log(f"タイムスケジューラー設定エラー: {e}", "error")
+
+    def _update_scheduler_settings_ui(self):
+        """タイムスケジューラー設定UIを更新"""
+        try:
+            scheduler_settings = self.app_settings.get(
+                "time_scheduler", asdict(TimeSchedulerSettings())
+            )
+
+            # 有効/無効設定
+            if hasattr(self, "scheduler_enabled_var"):
+                self.scheduler_enabled_var.set(scheduler_settings.get("enabled", False))
+
+            # 時刻設定の読み込み（2桁フォーマット対応）
+            self._set_time_spinboxes(
+                scheduler_settings.get("start_time", "22:00"),
+                scheduler_settings.get("end_time", "06:00"),
+            )
+
+        except Exception as e:
+            logger.error(f"スケジューラー設定UI更新エラー: {e}", exc_info=True)
+
+    def _set_time_spinboxes(self, start_time: str, end_time: str):
+        """時刻スピンボックスに値を設定（2桁フォーマット保証）"""
+        try:
+            # 開始時刻
+            start_hour, start_minute = start_time.split(":")
+            if hasattr(self, "scheduler_start_hour_var"):
+                self.scheduler_start_hour_var.set(f"{int(start_hour):02d}")
+            if hasattr(self, "scheduler_start_minute_var"):
+                self.scheduler_start_minute_var.set(f"{int(start_minute):02d}")
+
+            # 終了時刻
+            end_hour, end_minute = end_time.split(":")
+            if hasattr(self, "scheduler_end_hour_var"):
+                self.scheduler_end_hour_var.set(f"{int(end_hour):02d}")
+            if hasattr(self, "scheduler_end_minute_var"):
+                self.scheduler_end_minute_var.set(f"{int(end_minute):02d}")
+
+        except (ValueError, AttributeError) as e:
+            logger.warning(f"時刻設定パース失敗、デフォルト値を使用: {e}")
+            # デフォルト値（TimeSchedulerSettingsから取得）
+            defaults = TimeSchedulerSettings()
+            self._set_time_spinboxes(defaults.start_time, defaults.end_time)

@@ -48,3 +48,14 @@ class RuleSettings:
     periodicity_window_seconds: int = 45  # 周期性を評価する時間窓（秒）
     min_event_interval_seconds: float = 2.0  # いびきイベント間の最小間隔（秒）
     max_event_interval_seconds: float = 10.0  # いびきイベント間の最大間隔（秒）
+
+
+@dataclass
+class TimeSchedulerSettings:
+    """
+    タイムスケジューラーの設定を管理するデータクラス
+    """
+
+    enabled: bool = False  # スケジューラー有効/無効
+    start_time: str = "22:00"  # 開始時刻（HH:MM形式）
+    end_time: str = "06:00"  # 終了時刻（HH:MM形式）

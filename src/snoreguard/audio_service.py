@@ -18,9 +18,9 @@ class AudioService:
     """
 
     SAMPLE_RATE = 16000  # サンプリングレート
-    VIZ_CHUNK_SIZE = 1600  # 0.1秒
+    VIZ_CHUNK_SIZE = 800  # 0.05秒
     ANALYSIS_CHUNK_DURATION_S = 1.0  # 分析チャンクの長さ
-    N_FFT = 480  # FFTのサイズ
+    N_FFT = 512  # FFTのサイズ
 
     _spectrum_buffer: np.ndarray | None = None  # スペクトラムバッファ
     _fft_buffer: np.ndarray | None = None  # FFTバッファ
@@ -201,13 +201,6 @@ class AudioService:
                     analysis_chunk_size : self._buffer_size
                 ]
             self._buffer_size = remaining_size
-
-    def _calculate_spectrum(self, chunk: np.ndarray) -> np.ndarray:
-        """FFTを実行して周波数スペクトラムを計算"""
-        padded_chunk = np.pad(chunk, (0, max(0, self.N_FFT - len(chunk))))
-        # FFTを実行
-        fft_result = np.fft.rfft(padded_chunk[: self.N_FFT])
-        return np.abs(fft_result) / self.N_FFT
 
     def _calculate_spectrum_optimized(self, chunk: np.ndarray) -> np.ndarray:
         """最適化されたFFT計算（事前割り当てバッファ使用）"""
