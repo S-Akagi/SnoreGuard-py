@@ -556,9 +556,6 @@ class UIBuilder:
         end_time_entry.grid(row=0, column=3, sticky="w")
         end_time_entry.bind("<FocusOut>", lambda e: self._on_scheduler_setting_change())
         
-        # ステータス更新タイマー開始
-        self._update_scheduler_status()
-        
     def _on_scheduler_setting_change(self):
         """タイムスケジューラー設定変更時の処理"""
         try:
@@ -576,40 +573,11 @@ class UIBuilder:
             
             # アプリケーションの設定を更新
             self.app.update_time_scheduler_settings(enabled, start_time, end_time)
-            self._update_scheduler_status()
             
         except Exception as e:
             logger.error(f"スケジューラー設定変更エラー: {e}", exc_info=True)
             self.app.add_log(f"スケジューラー設定エラー: {e}", "error")
     
-    def _update_scheduler_status(self):
-        """スケジューラーステータス表示を更新"""
-        try:
-            status = self.app.get_time_scheduler_status()
-            next_action = self.app.get_time_scheduler_next_action()
-            
-            if status["enabled"]:
-                if status["running"]:
-                    status_text = f"有効 ({status['start_time']}-{status['end_time']})"
-                else:
-                    status_text = "有効 (設定エラー)"
-            else:
-                status_text = "無効"
-            
-            self.app.scheduler_status_var.set(status_text)
-            
-            if next_action:
-                action_text = f"次の{next_action['action']}: {next_action['relative_time']}"
-                self.app.scheduler_next_action_var.set(action_text)
-            else:
-                self.app.scheduler_next_action_var.set("")
-            
-            # 30秒後に再更新
-            self.root.after(30000, self._update_scheduler_status)
-            
-        except Exception as e:
-            logger.error(f"スケジューラーステータス更新エラー: {e}", exc_info=True)
-
     def _init_plots(self):
         """
         リアルタイム波形とスペクトラム表示用のmatplotlibプロットを初期化
