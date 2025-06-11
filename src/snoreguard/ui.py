@@ -159,7 +159,7 @@ class UIBuilder:
         """
         # メインフレーム
         main_frame = ctk.CTkFrame(self.root, fg_color="transparent")
-        main_frame.grid(row=0, column=0, padx=10, pady=10, sticky="nsew")
+        main_frame.grid(row=0, column=0, padx=5, pady=5, sticky="nsew")
         main_frame.grid_columnconfigure(0, weight=3, uniform="a")  # 左カラム
         main_frame.grid_columnconfigure(1, weight=3, uniform="a")  # 中央カラム
         main_frame.grid_columnconfigure(2, weight=3, uniform="a")  # 右カラム
@@ -167,14 +167,14 @@ class UIBuilder:
 
         # --- 左カラム ---
         left_column = ctk.CTkFrame(main_frame, fg_color="transparent")
-        left_column.grid(row=0, column=0, sticky="nsew", padx=(0, 5))
+        left_column.grid(row=0, column=0, sticky="nsew")
         left_column.grid_rowconfigure(0, weight=1)
         left_column.grid_columnconfigure(0, weight=1)
         self._create_analysis_card(left_column, row=0, col=0)  # 分析UI
 
         # --- 中央カラム ---
         center_column = ctk.CTkFrame(main_frame, fg_color="transparent")
-        center_column.grid(row=0, column=1, sticky="nsew", padx=5)
+        center_column.grid(row=0, column=1, sticky="nsew")
         center_column.grid_columnconfigure(0, weight=1)
         center_column.grid_rowconfigure(0, weight=0)  # 更新通知UI
         center_column.grid_rowconfigure(1, weight=0)  # ステータスUI
@@ -188,7 +188,7 @@ class UIBuilder:
 
         # --- 右カラム ---
         right_column = ctk.CTkFrame(main_frame, fg_color="transparent")
-        right_column.grid(row=0, column=2, sticky="nsew", padx=(5, 0))
+        right_column.grid(row=0, column=2, sticky="nsew")
         right_column.grid_rowconfigure(0, weight=1)  # 設定UI
         right_column.grid_rowconfigure(1, weight=0)  # タイムスケジューラーUI
         right_column.grid_columnconfigure(0, weight=1)
@@ -229,7 +229,7 @@ class UIBuilder:
 
         app.fig = Figure(figsize=(5, 3), dpi=100, facecolor=self.COLOR_CARD)
         app.fig.subplots_adjust(
-            left=0.12, right=0.95, top=0.9, bottom=0.15, hspace=0.35
+            left=0.15, right=0.95, top=0.88, bottom=0.18, hspace=0.4
         )
         app.ax_waveform, app.ax_spectrum = app.fig.subplots(2, 1)
         app.plot_canvas = FigureCanvasTkAgg(app.fig, master=card)
@@ -436,14 +436,40 @@ class UIBuilder:
         いびき検出ルールのパラメータ調整用のスクロール可能な設定カードを作成
         """
         app = self.app
+        
+        # メインフレーム
+        main_frame = ctk.CTkFrame(parent, fg_color=self.COLOR_CARD, corner_radius=8)
+        main_frame.grid(row=row, column=col, sticky="nsew", padx=5, pady=5)
+        main_frame.grid_columnconfigure(0, weight=1)
+        main_frame.grid_rowconfigure(1, weight=1)
+        
+        # ヘッダーフレーム（ラベル + リセットボタン）
+        header_frame = ctk.CTkFrame(main_frame, fg_color="transparent")
+        header_frame.grid(row=0, column=0, sticky="ew", padx=15, pady=(10, 5))
+        header_frame.grid_columnconfigure(0, weight=1)
+        
+        ctk.CTkLabel(
+            header_frame, text="ルール設定", 
+            font=self.font_l, text_color=self.COLOR_TEXT_1
+        ).grid(row=0, column=0, sticky="w")
+        
+        ctk.CTkButton(
+            header_frame,
+            text="リセット",
+            command=app.reset_settings,
+            font=self.font_s,
+            fg_color="#B03A2E",
+            hover_color="#C0392B",
+            width=60,
+            height=24
+        ).grid(row=0, column=1, sticky="e")
+        
+        # スクロール可能な設定エリア
         card = ctk.CTkScrollableFrame(
-            parent,
-            label_text="ルール設定",
-            label_font=self.font_l,
-            label_text_color=self.COLOR_TEXT_1,
-            fg_color=self.COLOR_CARD,
+            main_frame,
+            fg_color="transparent"
         )
-        card.grid(row=row, column=col, sticky="nsew", padx=5, pady=5)
+        card.grid(row=1, column=0, sticky="nsew", padx=10, pady=(0, 10))
         card.grid_columnconfigure(0, weight=1)
 
         params = [
@@ -499,6 +525,7 @@ class UIBuilder:
             )
             slider.grid(row=1, column=0, sticky="ew", padx=5)
             app.rule_setting_vars[name] = (var, val_label_var, slider)
+        
 
     def _create_time_scheduler_card(self, parent, row, col):
         """
@@ -679,13 +706,15 @@ class UIBuilder:
             for spine in ["top", "right"]:
                 ax.spines[spine].set_visible(False)
             # テキスト色をダークテーマに合わせて設定
-            ax.tick_params(axis="y", colors=hex_text_color, labelsize=8, width=0.6)
-            ax.tick_params(axis="x", colors=hex_text_color, labelsize=8, width=0.6)
+            ax.tick_params(axis="y", colors=hex_text_color, labelsize=7, width=0.6)
+            ax.tick_params(axis="x", colors=hex_text_color, labelsize=7, width=0.6)
             ax.title.set_color(hex_text_color)
             ax.xaxis.label.set_color(hex_text_color)
             ax.yaxis.label.set_color(hex_text_color)
+            # Y軸ラベルの位置調整
+            ax.yaxis.set_label_coords(-0.1, 0.5)
 
-        font_props = {"size": 10}
+        font_props = {"size": 9, "family": "sans-serif"}
         app.ax_waveform.set_title("Waveform", fontdict=font_props)
         app.ax_waveform.set_ylim(-1, 1)
         app.ax_waveform.set_xlim(0, sr)

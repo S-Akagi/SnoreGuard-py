@@ -738,6 +738,30 @@ class SnoreGuardApp:
             self.app_settings["auto_mute_on_snore"] = self.auto_mute_var.get()
         self.app_settings["rule_settings"] = asdict(self.rule_settings)
         self.settings_manager.save(self.app_settings)
+    
+    def reset_settings(self):
+        """設定をデフォルト値にリセット"""
+        try:
+            # デフォルト設定を取得
+            default_settings = self._get_default_settings()
+            
+            # 設定を更新
+            self.app_settings = default_settings
+            self.rule_settings = RuleSettings()
+            self.time_scheduler_settings = TimeSchedulerSettings()
+            
+            # UIを更新
+            self._update_rule_settings_ui()
+            self._update_scheduler_settings_ui()
+            
+            # 設定を保存
+            self.settings_manager.save(self.app_settings)
+            
+            self.add_log("設定をデフォルト値にリセットしました", "info")
+            
+        except Exception as e:
+            logger.error(f"設定リセット中にエラー: {e}", exc_info=True)
+            self.add_log(f"設定リセットエラー: {e}", "error")
 
     def _update_detailed_status(self, res: dict):
         """詳細ステータス更新"""
