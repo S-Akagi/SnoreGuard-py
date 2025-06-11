@@ -55,6 +55,7 @@ class TimeSchedulerSettings:
     """
     タイムスケジューラーの設定を管理するデータクラス
     """
+
     enabled: bool = False  # スケジューラー有効/無効
     start_time: str = "22:00"  # 開始時刻（HH:MM形式）
     end_time: str = "06:00"  # 終了時刻（HH:MM形式）

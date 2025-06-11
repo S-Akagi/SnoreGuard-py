@@ -193,7 +193,9 @@ class UIBuilder:
         right_column.grid_rowconfigure(1, weight=0)  # タイムスケジューラーUI
         right_column.grid_columnconfigure(0, weight=1)
         self._create_settings_card(right_column, row=0, col=0)  # 設定UI
-        self._create_time_scheduler_card(right_column, row=1, col=0)  # タイムスケジューラーUI
+        self._create_time_scheduler_card(
+            right_column, row=1, col=0
+        )  # タイムスケジューラーUI
 
     def _create_card_frame(self, parent, title, col=0, row=0, **kwargs):
         """
@@ -436,23 +438,25 @@ class UIBuilder:
         いびき検出ルールのパラメータ調整用のスクロール可能な設定カードを作成
         """
         app = self.app
-        
+
         # メインフレーム
         main_frame = ctk.CTkFrame(parent, fg_color=self.COLOR_CARD, corner_radius=8)
         main_frame.grid(row=row, column=col, sticky="nsew", padx=5, pady=5)
         main_frame.grid_columnconfigure(0, weight=1)
         main_frame.grid_rowconfigure(1, weight=1)
-        
+
         # ヘッダーフレーム（ラベル + リセットボタン）
         header_frame = ctk.CTkFrame(main_frame, fg_color="transparent")
         header_frame.grid(row=0, column=0, sticky="ew", padx=15, pady=(10, 5))
         header_frame.grid_columnconfigure(0, weight=1)
-        
+
         ctk.CTkLabel(
-            header_frame, text="ルール設定", 
-            font=self.font_l, text_color=self.COLOR_TEXT_1
+            header_frame,
+            text="ルール設定",
+            font=self.font_l,
+            text_color=self.COLOR_TEXT_1,
         ).grid(row=0, column=0, sticky="w")
-        
+
         ctk.CTkButton(
             header_frame,
             text="リセット",
@@ -461,14 +465,11 @@ class UIBuilder:
             fg_color="#B03A2E",
             hover_color="#C0392B",
             width=60,
-            height=24
+            height=24,
         ).grid(row=0, column=1, sticky="e")
-        
+
         # スクロール可能な設定エリア
-        card = ctk.CTkScrollableFrame(
-            main_frame,
-            fg_color="transparent"
-        )
+        card = ctk.CTkScrollableFrame(main_frame, fg_color="transparent")
         card.grid(row=1, column=0, sticky="nsew", padx=10, pady=(0, 10))
         card.grid_columnconfigure(0, weight=1)
 
@@ -525,7 +526,6 @@ class UIBuilder:
             )
             slider.grid(row=1, column=0, sticky="ew", padx=5)
             app.rule_setting_vars[name] = (var, val_label_var, slider)
-        
 
     def _create_time_scheduler_card(self, parent, row, col):
         """
@@ -533,75 +533,87 @@ class UIBuilder:
         """
         app = self.app
         card = self._create_card_frame(parent, "タイムスケジューラー", col, row)
-        
+
         app.scheduler_enabled_var = tk.BooleanVar()
         scheduler_checkbox = ctk.CTkCheckBox(
             card,
             text="自動スケジューラーを有効化",
             variable=app.scheduler_enabled_var,
             command=self._on_scheduler_setting_change,
-            font=self.font_m
+            font=self.font_m,
         )
         scheduler_checkbox.grid(row=1, column=0, sticky="w", padx=10, pady=(10, 15))
-        
+
         time_frame = ctk.CTkFrame(card, fg_color="transparent")
         time_frame.grid(row=2, column=0, sticky="ew", padx=10, pady=(0, 10))
         time_frame.grid_columnconfigure(0, weight=1)
         time_frame.grid_columnconfigure(1, weight=1)
-        
+
         from core.settings import TimeSchedulerSettings
+
         defaults = TimeSchedulerSettings()
-        
-        self._create_time_input_section(time_frame, "開始", 0, 0, 
-                                      defaults.start_time, "start")
-        self._create_time_input_section(time_frame, "終了", 0, 1, 
-                                      defaults.end_time, "end")
-        
-    def _create_time_input_section(self, parent, label_text, row, col, 
-                                 default_time, time_type):
+
+        self._create_time_input_section(
+            time_frame, "開始", 0, 0, defaults.start_time, "start"
+        )
+        self._create_time_input_section(
+            time_frame, "終了", 0, 1, defaults.end_time, "end"
+        )
+
+    def _create_time_input_section(
+        self, parent, label_text, row, col, default_time, time_type
+    ):
         """
         時刻入力セクションを作成（コンパクト版）
         """
         app = self.app
         section = ctk.CTkFrame(parent, fg_color=self.COLOR_WIDGET, corner_radius=6)
-        section.grid(row=row, column=col, sticky="ew", 
-                    padx=(0, 3) if col == 0 else (3, 0), pady=5)
+        section.grid(
+            row=row,
+            column=col,
+            sticky="ew",
+            padx=(0, 3) if col == 0 else (3, 0),
+            pady=5,
+        )
         section.grid_columnconfigure(0, weight=1)
-        
+
         ctk.CTkLabel(
-            section, text=label_text, 
-            font=self.font_s, text_color=self.COLOR_TEXT_2
+            section, text=label_text, font=self.font_s, text_color=self.COLOR_TEXT_2
         ).grid(row=0, column=0, pady=(8, 5))
-        
+
         time_container = ctk.CTkFrame(section, fg_color="transparent")
         time_container.grid(row=1, column=0, padx=8, pady=(0, 8))
-        
+
         hour, minute = default_time.split(":")
-        
+
         hour_var = tk.StringVar(value=f"{int(hour):02d}")
-        hour_menu = self._create_time_option_menu(time_container, hour_var, 
-                                                [f"{i:02d}" for i in range(24)])
+        hour_menu = self._create_time_option_menu(
+            time_container, hour_var, [f"{i:02d}" for i in range(24)]
+        )
         hour_menu.grid(row=0, column=0, padx=(0, 3))
-        
+
         ctk.CTkLabel(
-            time_container, text=":", 
-            font=("Arial", 12, "bold"), text_color=self.COLOR_TEXT_1
+            time_container,
+            text=":",
+            font=("Arial", 12, "bold"),
+            text_color=self.COLOR_TEXT_1,
         ).grid(row=0, column=1, padx=2)
-        
+
         minute_var = tk.StringVar(value=f"{int(minute):02d}")
-        minute_menu = self._create_time_option_menu(time_container, minute_var,
-                                                  [f"{i:02d}" for i in range(0, 60, 5)])
+        minute_menu = self._create_time_option_menu(
+            time_container, minute_var, [f"{i:02d}" for i in range(0, 60, 5)]
+        )
         minute_menu.grid(row=0, column=2, padx=(3, 0))
-        
+
         setattr(app, f"scheduler_{time_type}_hour_var", hour_var)
         setattr(app, f"scheduler_{time_type}_minute_var", minute_var)
-        
+
     def _create_time_option_menu(self, parent, variable, values):
         """
         時刻選択用のコンパクトスピンボックスを作成
         """
         frame = ctk.CTkFrame(parent, fg_color="transparent")
-        
+
         # 上矢印ボタン（上部）
         up_button = ctk.CTkButton(
             frame,
@@ -613,10 +625,10 @@ class UIBuilder:
             hover_color=("#D0D0D0", "#6A6A6A"),
             text_color=self.COLOR_TEXT_1,
             corner_radius=2,
-            command=lambda: self._increment_time(variable, values, 1)
+            command=lambda: self._increment_time(variable, values, 1),
         )
         up_button.grid(row=0, column=0, sticky="ew", pady=(0, 1))
-        
+
         # 値表示エントリ（中央）
         entry = ctk.CTkEntry(
             frame,
@@ -628,10 +640,10 @@ class UIBuilder:
             border_color=("#D0D0D0", "#6A6A6A"),
             text_color=self.COLOR_TEXT_1,
             justify="center",
-            state="readonly"
+            state="readonly",
         )
         entry.grid(row=1, column=0, sticky="ew")
-        
+
         # 下矢印ボタン（下部）
         down_button = ctk.CTkButton(
             frame,
@@ -643,12 +655,12 @@ class UIBuilder:
             hover_color=("#D0D0D0", "#6A6A6A"),
             text_color=self.COLOR_TEXT_1,
             corner_radius=2,
-            command=lambda: self._increment_time(variable, values, -1)
+            command=lambda: self._increment_time(variable, values, -1),
         )
         down_button.grid(row=2, column=0, sticky="ew", pady=(1, 0))
-        
+
         return frame
-        
+
     def _increment_time(self, variable, values, direction):
         """
         時刻値を増減する（スピンボックス風の操作）
@@ -664,7 +676,7 @@ class UIBuilder:
             if values:
                 variable.set(values[0])
                 self._on_scheduler_setting_change()
-        
+
     def _on_scheduler_setting_change(self):
         """
         タイムスケジューラー設定変更時の処理
@@ -673,13 +685,13 @@ class UIBuilder:
             enabled = self.app.scheduler_enabled_var.get()
             start_time = f"{self.app.scheduler_start_hour_var.get()}:{self.app.scheduler_start_minute_var.get()}"
             end_time = f"{self.app.scheduler_end_hour_var.get()}:{self.app.scheduler_end_minute_var.get()}"
-            
+
             self.app.update_time_scheduler_settings(enabled, start_time, end_time)
-            
+
         except Exception as e:
             logger.error(f"スケジューラー設定変更エラー: {e}", exc_info=True)
             self.app.add_log(f"スケジューラー設定エラー: {e}", "error")
-    
+
     def _init_plots(self):
         """
         リアルタイム波形とスペクトラム表示用のmatplotlibプロットを初期化

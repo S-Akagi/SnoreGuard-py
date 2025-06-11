@@ -202,13 +202,6 @@ class AudioService:
                 ]
             self._buffer_size = remaining_size
 
-    def _calculate_spectrum(self, chunk: np.ndarray) -> np.ndarray:
-        """FFTを実行して周波数スペクトラムを計算"""
-        padded_chunk = np.pad(chunk, (0, max(0, self.N_FFT - len(chunk))))
-        # FFTを実行
-        fft_result = np.fft.rfft(padded_chunk[: self.N_FFT])
-        return np.abs(fft_result) / self.N_FFT
-
     def _calculate_spectrum_optimized(self, chunk: np.ndarray) -> np.ndarray:
         """最適化されたFFT計算（事前割り当てバッファ使用）"""
         chunk_len = len(chunk)
