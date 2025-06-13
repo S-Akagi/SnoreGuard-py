@@ -21,6 +21,7 @@ from snoreguard.vrc.handler import VRCHandler
 
 from snoreguard import __version__
 from snoreguard.updater import Updater
+from snoreguard.calibration_modal import CalibrationModal
 
 
 class ThreadSafeHandler:
@@ -120,6 +121,9 @@ class SnoreGuardApp:
             start_callback=self._scheduler_start_detection,
             stop_callback=self._scheduler_stop_detection,
         )
+
+        # キャリブレーションモーダル
+        self.calibration_modal = None
 
         # UI初期化
         from snoreguard.ui import UIBuilder
@@ -1062,3 +1066,123 @@ class SnoreGuardApp:
             # デフォルト値（TimeSchedulerSettingsから取得）
             defaults = TimeSchedulerSettings()
             self._set_time_spinboxes(defaults.start_time, defaults.end_time)
+
+    # ===== 自動キャリブレーション関連メソッド =====
+
+    def open_calibration_modal(self):
+        """キャリブレーションモーダルを開く"""
+        try:
+            if self.is_running:
+                self.add_log("検出停止後にキャリブレーションを開始してください", "warning")
+                return
+                
+            if self.calibration_modal is None:
+                self.calibration_modal = CalibrationModal(
+                    self.root,
+                    on_completion=self._on_calibration_completed
+                )
+                # アプリインスタンスへの参照を設定
+                self.calibration_modal.app = self
+            
+            self.calibration_modal.show()
+            
+        except Exception as e:
+            logger.error(f"キャリブレーションモーダル開始エラー: {e}", exc_info=True)
+            self.add_log(f"キャリブレーションモーダル開始エラー: {e}", "error")
+
+    def _on_calibration_completed(self, calibration_result):
+        """キャリブレーション完了時のコールバック"""
+        try:
+            # 変更前の設定を保存
+            old_settings = self.rule_settings
+            optimal_settings = calibration_result.optimal_settings
+            confidence = calibration_result.confidence_scores.get('total_confidence', 0)
+
+            # 設定を更新
+            self.rule_settings = optimal_settings
+            self.audio_service.rule_settings = optimal_settings
+
+            # UI設定も更新
+            self._apply_settings_to_ui(optimal_settings)
+
+            # 設定を保存
+            self._save_app_settings()
+
+            # 変更内容をログに表示
+            self._log_calibration_changes(old_settings, optimal_settings)
+            self.add_log(f"キャリブレーション結果を適用しました (信頼度: {confidence:.1%})", "success")
+
+        except Exception as e:
+            logger.error(f"キャリブレーション結果適用エラー: {e}", exc_info=True)
+            self.add_log(f"キャリブレーション結果適用エラー: {e}", "error")
+
+    def _log_calibration_changes(self, old_settings, new_settings):
+        """キャリブレーション変更内容をログに表示"""
+        try:
+            from dataclasses import fields
+            
+            self.add_log("=== キャリブレーション結果 ===", "info")
+            
+            # 設定項目の日本語名マッピング
+            field_names = {
+                'energy_threshold': 'エネルギー閾値',
+                'f0_confidence_threshold': 'F0信頼度閾値',
+                'spectral_centroid_threshold': 'スペクトル重心閾値',
+                'zcr_threshold': 'ZCR閾値',
+                'min_duration_seconds': '最小持続時間',
+                'max_duration_seconds': '最大持続時間',
+                'f0_min_hz': 'F0最小値',
+                'f0_max_hz': 'F0最大値',
+                'periodicity_event_count': '周期イベント数',
+                'periodicity_window_seconds': '周期ウィンドウ',
+                'min_event_interval_seconds': '最小イベント間隔',
+                'max_event_interval_seconds': '最大イベント間隔'
+            }
+            
+            changes_found = False
+            
+            for field in fields(old_settings):
+                field_name = field.name
+                old_value = getattr(old_settings, field_name)
+                new_value = getattr(new_settings, field_name)
+                
+                # 値が変更された場合のみ表示
+                if abs(old_value - new_value) > 1e-6:  # 浮動小数点数の比較
+                    changes_found = True
+                    display_name = field_names.get(field_name, field_name)
+                    
+                    # 値の形式を整える
+                    if isinstance(old_value, float):
+                        old_str = f"{old_value:.4f}".rstrip('0').rstrip('.')
+                        new_str = f"{new_value:.4f}".rstrip('0').rstrip('.')
+                    else:
+                        old_str = str(old_value)
+                        new_str = str(new_value)
+                    
+                    self.add_log(f"  {display_name}: {old_str} → {new_str}", "info")
+            
+            if not changes_found:
+                self.add_log("  変更された設定項目はありません", "info")
+            
+            self.add_log("========================", "info")
+            
+        except Exception as e:
+            logger.error(f"変更内容ログ表示エラー: {e}", exc_info=True)
+
+    def _apply_settings_to_ui(self, settings: RuleSettings):
+        """設定をUIに適用"""
+        try:
+            settings_dict = asdict(settings)
+            for name, value in settings_dict.items():
+                if name in self.rule_setting_vars:
+                    var, label_var, slider = self.rule_setting_vars[name]
+                    var.set(value)
+                    
+                    # ラベル更新
+                    if isinstance(value, int):
+                        label_var.set(f"{value}")
+                    else:
+                        label_var.set(f"{value:.3f}")
+
+        except Exception as e:
+            logger.error(f"UI設定適用エラー: {e}", exc_info=True)
