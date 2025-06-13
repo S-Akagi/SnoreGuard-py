@@ -260,8 +260,8 @@ class RuleBasedProcessor:
 
         # 音声処理パラメータ
         self.sample_rate = 16000
-        self.frame_length = 1024
-        self.hop_length = 256
+        self.frame_length = 800
+        self.hop_length = 200
         self.max_frames = int(self.sample_rate * 5.0 / self.hop_length)
 
         # イベント管理
