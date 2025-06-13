@@ -457,8 +457,31 @@ class UIBuilder:
             text_color=self.COLOR_TEXT_1,
         ).grid(row=0, column=0, sticky="w")
 
+        # ボタンフレーム
+        button_frame = ctk.CTkFrame(header_frame, fg_color="transparent")
+        button_frame.grid(row=0, column=1, sticky="e")
+        
+        # プレビューラベル
+        ctk.CTkLabel(
+            button_frame,
+            text="プレビュー",
+            font=ctk.CTkFont(family="Meiryo UI", size=9),
+            text_color="#F39C12",  # 黄色っぽい色
+        ).grid(row=0, column=0, padx=(0, 5), sticky="e")
+        
         ctk.CTkButton(
-            header_frame,
+            button_frame,
+            text="自動調整",
+            command=app.open_calibration_modal,
+            font=self.font_s,
+            fg_color="#1E88E5",
+            hover_color="#1976D2",
+            width=70,
+            height=24,
+        ).grid(row=0, column=1, padx=(0, 5))
+        
+        ctk.CTkButton(
+            button_frame,
             text="リセット",
             command=app.reset_settings,
             font=self.font_s,
@@ -466,7 +489,7 @@ class UIBuilder:
             hover_color="#C0392B",
             width=60,
             height=24,
-        ).grid(row=0, column=1, sticky="e")
+        ).grid(row=0, column=2)
 
         # スクロール可能な設定エリア
         card = ctk.CTkScrollableFrame(main_frame, fg_color="transparent")
@@ -526,6 +549,7 @@ class UIBuilder:
             )
             slider.grid(row=1, column=0, sticky="ew", padx=5)
             app.rule_setting_vars[name] = (var, val_label_var, slider)
+
 
     def _create_time_scheduler_card(self, parent, row, col):
         """
