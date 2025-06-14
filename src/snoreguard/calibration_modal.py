@@ -26,7 +26,8 @@ class CalibrationModal:
     ):
         self.parent = parent
         self.on_completion = on_completion
-        self.auto_calibrator = AutoCalibrator()
+        self.app = None  # アプリインスタンスは後で設定される
+        self.auto_calibrator = None  # アプリインスタンス設定後に初期化される
         self.current_stage = 0
         self.modal_window = None
         self.original_settings = None
@@ -47,6 +48,10 @@ class CalibrationModal:
         """モーダルウィンドウを表示"""
         if self.modal_window is not None:
             return
+
+        # AutoCalibratorをアプリインスタンス付きで初期化
+        if self.auto_calibrator is None:
+            self.auto_calibrator = AutoCalibrator(app_instance=self.app)
 
         self.modal_window = ctk.CTkToplevel(self.parent)
         self.modal_window.title("自動キャリブレーション")
@@ -70,7 +75,7 @@ class CalibrationModal:
 
     def close(self):
         """モーダルウィンドウを閉じる"""
-        if self.auto_calibrator.is_calibrating:
+        if self.auto_calibrator and self.auto_calibrator.is_calibrating:
             self.auto_calibrator.stop_calibration()
 
         if self.modal_window:
@@ -280,6 +285,18 @@ class CalibrationModal:
     def start_calibration(self):
         """キャリブレーション開始"""
         try:
+            # 入力デバイスのチェック（録音開始時にも再度チェックされる）
+            try:
+                self.auto_calibrator.recorder._select_device()
+            except IOError as device_error:
+                # デバイス選択エラーの場合、ダイアログ表示
+                from tkinter import messagebox
+                messagebox.showerror(
+                    "入力デバイス未選択",
+                    "ダッシュボードで入力デバイスを選択してから\n自動調整を開始してください。"
+                )
+                return
+
             # 現在の設定を保存（アプリインスタンスから取得）
             if hasattr(self, "app") and hasattr(self.app, "rule_settings"):
                 from copy import deepcopy
