@@ -404,7 +404,7 @@ class UIBuilder:
             checkbox_frame,
             text="PC音声通知",
             variable=app.notification_var,
-            command=app._save_app_settings,
+            command=lambda: app._save_app_settings(skip_osc_feedback=True),
             font=self.font_s,
         ).pack(side="left", padx=(0, 10))
         if app.HAS_OSC:
@@ -412,7 +412,7 @@ class UIBuilder:
                 checkbox_frame,
                 text="VRChat自動ミュート",
                 variable=app.auto_mute_var,
-                command=app._save_app_settings,
+                command=lambda: app._save_app_settings(skip_osc_feedback=True),
                 font=self.font_s,
             ).pack(side="left")
         logger.debug("コントロールカード作成完了")
@@ -460,7 +460,7 @@ class UIBuilder:
         # ボタンフレーム
         button_frame = ctk.CTkFrame(header_frame, fg_color="transparent")
         button_frame.grid(row=0, column=1, sticky="e")
-        
+
         # プレビューラベル
         ctk.CTkLabel(
             button_frame,
@@ -468,7 +468,7 @@ class UIBuilder:
             font=ctk.CTkFont(family="Meiryo UI", size=9),
             text_color="#F39C12",  # 黄色っぽい色
         ).grid(row=0, column=0, padx=(0, 5), sticky="e")
-        
+
         ctk.CTkButton(
             button_frame,
             text="自動調整",
@@ -479,7 +479,7 @@ class UIBuilder:
             width=70,
             height=24,
         ).grid(row=0, column=1, padx=(0, 5))
-        
+
         ctk.CTkButton(
             button_frame,
             text="リセット",
@@ -549,7 +549,6 @@ class UIBuilder:
             )
             slider.grid(row=1, column=0, sticky="ew", padx=5)
             app.rule_setting_vars[name] = (var, val_label_var, slider)
-
 
     def _create_time_scheduler_card(self, parent, row, col):
         """
