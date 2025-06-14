@@ -370,11 +370,7 @@ class SnoreGuardApp:
             pass
 
         # データキューリセット
-        while not self.data_queue.empty():
-            try:
-                self.data_queue.get_nowait()
-            except queue.Empty:
-                break
+        self._clear_data_queue()
 
         # UI状態更新
         self._update_control_state()
@@ -830,12 +826,35 @@ class SnoreGuardApp:
         """スレッドセーフなログ追加"""
         ThreadSafeHandler.safe_log(self.root, self.add_log, message, level)
 
+    def _clear_data_queue(self):
+        """データキューをクリア"""
+        logger.debug("データキュークリア開始")
+        cleared_count = 0
+        while not self.data_queue.empty():
+            try:
+                self.data_queue.get_nowait()
+                cleared_count += 1
+            except queue.Empty:
+                break
+        if cleared_count > 0:
+            logger.debug(f"データキューから{cleared_count}個の項目をクリア")
+        logger.debug("データキュークリア完了")
+
     def _on_closing(self):
         """終了処理"""
         logger.debug("アプリケーション終了処理開始")
         if self.is_running:
             logger.debug("検出処理を停止中")
             self._stop_detection()
+        
+        # AudioServiceの最終クリーンアップ
+        if hasattr(self, 'audio_service') and self.audio_service is not None:
+            logger.debug("AudioServiceの最終クリーンアップ中")
+            self.audio_service._clear_buffers()
+            
+        # データキューをクリア
+        self._clear_data_queue()
+        
         if self.HAS_OSC:
             logger.debug("VRCハンドラーを停止中")
             self.vrc_handler.stop()

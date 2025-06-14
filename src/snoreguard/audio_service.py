@@ -58,6 +58,9 @@ class AudioService:
         )  # スペクトラムバッファ
         self._fft_buffer = np.zeros(self.N_FFT, dtype=np.float64)  # FFTバッファ
 
+        # 初期化時にバッファをクリア
+        self._clear_buffers()
+
         logger.debug(
             f"AudioService初期化完了 - SR:{self.SAMPLE_RATE}, FFT:{self.N_FFT}"
         )
@@ -88,7 +91,7 @@ class AudioService:
             raise
 
         self.is_running = True  # 実行中フラグをセット
-        self._buffer_size = 0  # バッファサイズをリセット
+        self._clear_buffers()  # バッファをクリア
         logger.debug("検出スレッド作成中")
 
         self._thread = threading.Thread(
@@ -109,7 +112,7 @@ class AudioService:
             if self._thread.is_alive():
                 logger.warning("検出スレッドが正常に終了しませんでした")
         self._thread = None
-        self._buffer_size = 0  # バッファサイズをリセット
+        self._clear_buffers()  # バッファをクリア
         logger.info("AudioService停止完了")
 
     def reset_processor_periodicity(self):
@@ -223,3 +226,24 @@ class AudioService:
         spectrum = np.abs(fft_result) / self.N_FFT
 
         return spectrum.astype(np.float32)  # メモリ効率のためfloat32で返す
+
+    def _clear_buffers(self):
+        """すべてのバッファとキャッシュをクリア"""
+        logger.debug("AudioServiceバッファクリア開始")
+        
+        # 分析バッファをクリア
+        if hasattr(self, 'analysis_buffer') and self.analysis_buffer is not None:
+            self.analysis_buffer.fill(0)
+        self._buffer_size = 0
+        
+        # FFT関連バッファをクリア
+        if hasattr(self, '_spectrum_buffer') and self._spectrum_buffer is not None:
+            self._spectrum_buffer.fill(0)
+        if hasattr(self, '_fft_buffer') and self._fft_buffer is not None:
+            self._fft_buffer.fill(0)
+            
+        # プロセッサのバッファもクリア
+        if hasattr(self, 'processor') and self.processor is not None:
+            self.processor.reset_periodicity()
+            
+        logger.debug("AudioServiceバッファクリア完了")
