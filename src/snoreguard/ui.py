@@ -404,7 +404,7 @@ class UIBuilder:
             checkbox_frame,
             text="PC音声通知",
             variable=app.notification_var,
-            command=app._save_app_settings,
+            command=lambda: app._save_app_settings(skip_osc_feedback=True),
             font=self.font_s,
         ).pack(side="left", padx=(0, 10))
         if app.HAS_OSC:
@@ -412,7 +412,7 @@ class UIBuilder:
                 checkbox_frame,
                 text="VRChat自動ミュート",
                 variable=app.auto_mute_var,
-                command=app._save_app_settings,
+                command=lambda: app._save_app_settings(skip_osc_feedback=True),
                 font=self.font_s,
             ).pack(side="left")
         logger.debug("コントロールカード作成完了")
@@ -457,8 +457,31 @@ class UIBuilder:
             text_color=self.COLOR_TEXT_1,
         ).grid(row=0, column=0, sticky="w")
 
+        # ボタンフレーム
+        button_frame = ctk.CTkFrame(header_frame, fg_color="transparent")
+        button_frame.grid(row=0, column=1, sticky="e")
+
+        # プレビューラベル
+        ctk.CTkLabel(
+            button_frame,
+            text="プレビュー",
+            font=ctk.CTkFont(family="Meiryo UI", size=9),
+            text_color="#F39C12",  # 黄色っぽい色
+        ).grid(row=0, column=0, padx=(0, 5), sticky="e")
+
         ctk.CTkButton(
-            header_frame,
+            button_frame,
+            text="自動調整",
+            command=app.open_calibration_modal,
+            font=self.font_s,
+            fg_color="#1E88E5",
+            hover_color="#1976D2",
+            width=70,
+            height=24,
+        ).grid(row=0, column=1, padx=(0, 5))
+
+        ctk.CTkButton(
+            button_frame,
             text="リセット",
             command=app.reset_settings,
             font=self.font_s,
@@ -466,7 +489,7 @@ class UIBuilder:
             hover_color="#C0392B",
             width=60,
             height=24,
-        ).grid(row=0, column=1, sticky="e")
+        ).grid(row=0, column=2)
 
         # スクロール可能な設定エリア
         card = ctk.CTkScrollableFrame(main_frame, fg_color="transparent")

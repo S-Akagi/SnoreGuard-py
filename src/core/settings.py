@@ -36,8 +36,8 @@ class RuleSettings:
     zcr_threshold: float = 0.06  # ゼロ交差率閾値
 
     # 時間的制約設定
-    min_duration_seconds: float = 0.1  # いびき音の最小持続時間（秒）
-    max_duration_seconds: float = 1.0  # いびき音の最大持続時間（秒）
+    min_duration_seconds: float = 0.2  # いびき音の最小持続時間（秒）
+    max_duration_seconds: float = 3.0  # いびき音の最大持続時間（秒）
 
     # 基本周波数の範囲設定
     f0_min_hz: float = 70.0  # いびき音として認識する最低基本周波数（Hz）

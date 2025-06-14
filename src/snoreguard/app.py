@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 import logging
 import queue
 import threading
@@ -21,6 +22,7 @@ from snoreguard.vrc.handler import VRCHandler
 
 from snoreguard import __version__
 from snoreguard.updater import Updater
+from snoreguard.calibration_modal import CalibrationModal
 
 
 class ThreadSafeHandler:
@@ -111,7 +113,7 @@ class SnoreGuardApp:
         # VRChatハンドラー初期化
         self.vrc_handler = VRCHandler(
             self.on_osc_status_change,
-            self.on_vrchat_mute_change,
+            self,
             self.add_log_threadsafe,
         )
 
@@ -120,6 +122,9 @@ class SnoreGuardApp:
             start_callback=self._scheduler_start_detection,
             stop_callback=self._scheduler_stop_detection,
         )
+
+        # キャリブレーションモーダル
+        self.calibration_modal = None
 
         # UI初期化
         from snoreguard.ui import UIBuilder
@@ -135,6 +140,9 @@ class SnoreGuardApp:
         # VRChatハンドラー開始
         self.vrc_handler.start()
         logger.debug("VRCハンドラー開始")
+
+        # 初期状態フィードバック（OSC接続後に実行、遅延を短縮）
+        self.root.after(500, self._send_initial_status_feedback)
 
         # タイムスケジューラー開始
         self._start_time_scheduler_if_enabled()
@@ -229,7 +237,7 @@ class SnoreGuardApp:
             # 設定を保存
             self._update_progress(10, "設定を保存中")
             self.app_settings["mic_device_name"] = selected_mic_name
-            self._save_app_settings()
+            self._save_app_settings(skip_osc_feedback=True)
 
             # 音声デバイスを準備
             self._update_progress(20, "音声デバイスを準備中")
@@ -287,6 +295,9 @@ class SnoreGuardApp:
         self.status_label_var.set("検出中")
         self.add_log(f"検出開始 ({selected_mic_name})", "system")
         logger.info(f"音声検出開始完了: {selected_mic_name}")
+
+        # VRChatへ状態フィードバック
+        self._send_status_feedback()
 
         # ビジュアル更新
         self.root.after(UPDATE_INTERVAL_MS, self._update_visuals)
@@ -370,6 +381,9 @@ class SnoreGuardApp:
         self.status_label_var.set("システム待機中")
         self.add_log("検出を停止しました。", "system")
         logger.info("音声検出停止完了")
+
+        # VRChatへ状態フィードバック
+        self._send_status_feedback()
 
     def _update_control_state(self):
         """システム状態に応じたUIコントロール状態を更新"""
@@ -730,14 +744,20 @@ class SnoreGuardApp:
         self._update_scheduler_settings_ui()
         self._update_control_state()
 
-    def _save_app_settings(self, *args):
+    def _save_app_settings(self, send_feedback=True, skip_osc_feedback=False, *args):
         """設定保存"""
+        logger.debug(f"設定保存開始 (send_feedback={send_feedback})")
         self.app_settings["mic_device_name"] = self.mic_var.get()
         self.app_settings["audio_notification_enabled"] = self.notification_var.get()
         if self.HAS_OSC:
             self.app_settings["auto_mute_on_snore"] = self.auto_mute_var.get()
         self.app_settings["rule_settings"] = asdict(self.rule_settings)
         self.settings_manager.save(self.app_settings)
+
+        # VRChatへ状態フィードバック（無限ループ防止）
+        if send_feedback:
+            self._send_status_feedback()
+        logger.debug("設定保存完了")
 
     def reset_settings(self):
         """設定をデフォルト値にリセット"""
@@ -834,6 +854,8 @@ class SnoreGuardApp:
         ThreadSafeHandler.safe_after(
             self.root, self._update_osc_status_ui, is_connected, message
         )
+        if is_connected and not hasattr(self, "_initial_feedback_sent"):
+            ThreadSafeHandler.safe_after(self.root, self._send_delayed_feedback)
 
     def _update_osc_status_ui(self, is_connected: bool, message: str):
         """OSC接続状態UI更新"""
@@ -1062,3 +1084,202 @@ class SnoreGuardApp:
             # デフォルト値（TimeSchedulerSettingsから取得）
             defaults = TimeSchedulerSettings()
             self._set_time_spinboxes(defaults.start_time, defaults.end_time)
+
+    # ===== 自動キャリブレーション関連メソッド =====
+
+    def open_calibration_modal(self):
+        """キャリブレーションモーダルを開く"""
+        try:
+            if self.is_running:
+                self.add_log(
+                    "検出停止後にキャリブレーションを開始してください", "warning"
+                )
+                return
+
+            if self.calibration_modal is None:
+                self.calibration_modal = CalibrationModal(
+                    self.root, on_completion=self._on_calibration_completed
+                )
+                # アプリインスタンスへの参照を設定
+                self.calibration_modal.app = self
+
+            self.calibration_modal.show()
+
+        except Exception as e:
+            logger.error(f"キャリブレーションモーダル開始エラー: {e}", exc_info=True)
+            self.add_log(f"キャリブレーションモーダル開始エラー: {e}", "error")
+
+    def _on_calibration_completed(self, calibration_result):
+        """キャリブレーション完了時のコールバック"""
+        try:
+            # 変更前の設定を保存
+            old_settings = self.rule_settings
+            optimal_settings = calibration_result.optimal_settings
+            confidence = calibration_result.confidence_scores.get("total_confidence", 0)
+
+            # 設定を更新
+            self.rule_settings = optimal_settings
+            self.audio_service.rule_settings = optimal_settings
+
+            # UI設定も更新
+            self._apply_settings_to_ui(optimal_settings)
+
+            # 設定を保存
+            self._save_app_settings()
+
+            # 変更内容をログに表示
+            self._log_calibration_changes(old_settings, optimal_settings)
+            self.add_log(
+                f"キャリブレーション結果を適用しました (信頼度: {confidence:.1%})",
+                "success",
+            )
+
+        except Exception as e:
+            logger.error(f"キャリブレーション結果適用エラー: {e}", exc_info=True)
+            self.add_log(f"キャリブレーション結果適用エラー: {e}", "error")
+
+    def _log_calibration_changes(self, old_settings, new_settings):
+        """キャリブレーション変更内容をログに表示"""
+        try:
+            from dataclasses import fields
+
+            self.add_log("=== キャリブレーション結果 ===", "info")
+
+            # 設定項目の日本語名マッピング
+            field_names = {
+                "energy_threshold": "エネルギー閾値",
+                "f0_confidence_threshold": "F0信頼度閾値",
+                "spectral_centroid_threshold": "スペクトル重心閾値",
+                "zcr_threshold": "ZCR閾値",
+                "min_duration_seconds": "最小持続時間",
+                "max_duration_seconds": "最大持続時間",
+                "f0_min_hz": "F0最小値",
+                "f0_max_hz": "F0最大値",
+                "periodicity_event_count": "周期イベント数",
+                "periodicity_window_seconds": "周期ウィンドウ",
+                "min_event_interval_seconds": "最小イベント間隔",
+                "max_event_interval_seconds": "最大イベント間隔",
+            }
+
+            changes_found = False
+
+            for field in fields(old_settings):
+                field_name = field.name
+                old_value = getattr(old_settings, field_name)
+                new_value = getattr(new_settings, field_name)
+
+                # 値が変更された場合のみ表示
+                if abs(old_value - new_value) > 1e-6:  # 浮動小数点数の比較
+                    changes_found = True
+                    display_name = field_names.get(field_name, field_name)
+
+                    # 値の形式を整える
+                    if isinstance(old_value, float):
+                        old_str = f"{old_value:.4f}".rstrip("0").rstrip(".")
+                        new_str = f"{new_value:.4f}".rstrip("0").rstrip(".")
+                    else:
+                        old_str = str(old_value)
+                        new_str = str(new_value)
+
+                    self.add_log(f"  {display_name}: {old_str} → {new_str}", "info")
+
+            if not changes_found:
+                self.add_log("  変更された設定項目はありません", "info")
+
+            self.add_log("========================", "info")
+
+        except Exception as e:
+            logger.error(f"変更内容ログ表示エラー: {e}", exc_info=True)
+
+    def _apply_settings_to_ui(self, settings: RuleSettings):
+        """設定をUIに適用"""
+        try:
+            settings_dict = asdict(settings)
+            for name, value in settings_dict.items():
+                if name in self.rule_setting_vars:
+                    var, label_var, slider = self.rule_setting_vars[name]
+                    var.set(value)
+
+                    # ラベル更新
+                    if isinstance(value, int):
+                        label_var.set(f"{value}")
+                    else:
+                        label_var.set(f"{value:.3f}")
+
+        except Exception as e:
+            logger.error(f"UI設定適用エラー: {e}", exc_info=True)
+
+    # ===== VRChat OSC連携機能 =====
+
+    def set_notification_from_osc(self, enabled: bool):
+        """OSC経由でPC通知音を設定"""
+        logger.debug(f"OSC経由通知設定要求: {enabled}")
+        try:
+            if self.notification_var.get() != enabled:
+                self.notification_var.set(enabled)
+                self._save_app_settings(send_feedback=False, skip_osc_feedback=True)
+                status_text = "ON" if enabled else "OFF"
+                self.add_log(f"OSC: 通知音{status_text}", "vrchat")
+        except Exception as e:
+            logger.error(f"OSC通知設定エラー: {e}", exc_info=True)
+            self.add_log(f"OSC通知設定エラー: {e}", "error")
+
+    def set_auto_mute_from_osc(self, enabled: bool):
+        """OSC経由で自動ミュートを設定"""
+        logger.debug(f"OSC経由自動ミュート設定要求: {enabled}")
+        try:
+            if not self.HAS_OSC:
+                self.add_log("OSC: 自動ミュート機能は無効です", "warning")
+                return
+
+            if self.auto_mute_var.get() != enabled:
+                self.auto_mute_var.set(enabled)
+                self._save_app_settings(send_feedback=False, skip_osc_feedback=True)
+                status_text = "ON" if enabled else "OFF"
+                self.add_log(f"OSC: 自動ミュート{status_text}", "vrchat")
+        except Exception as e:
+            logger.error(f"OSC自動ミュート設定エラー: {e}", exc_info=True)
+            self.add_log(f"OSC自動ミュート設定エラー: {e}", "error")
+
+    def _send_initial_status_feedback(self):
+        """初期化時の状態フィードバック（1回限り）"""
+        if hasattr(self, "_initial_feedback_sent"):
+            return
+
+        self._initial_feedback_sent = True
+        logger.debug("初期状態フィードバック送信")
+        self._send_status_feedback()
+
+    def _send_delayed_feedback(self):
+        """OSC接続完了後の遅延フィードバック"""
+        logger.debug("遅延フィードバック送信")
+        self.root.after(1000, self._send_status_feedback)
+
+    def _send_status_feedback(self):
+        """現在の状態をVRChatへフィードバック"""
+        try:
+            if not self.HAS_OSC or not self.vrc_handler:
+                return
+
+            feedback_data = [
+                (
+                    "/avatar/parameters/SnoreGuard/ToggleDetection",
+                    bool(self.is_running),
+                ),
+                (
+                    "/avatar/parameters/SnoreGuard/SetNotification",
+                    bool(self.notification_var.get()),
+                ),
+                (
+                    "/avatar/parameters/SnoreGuard/SetAutoMute",
+                    bool(self.auto_mute_var.get() if self.HAS_OSC else False),
+                ),
+            ]
+
+            for address, value in feedback_data:
+                self.vrc_handler.send_feedback(address, value)
+
+            logger.debug("状態フィードバック送信完了")
+
+        except Exception as e:
+            logger.error(f"状態フィードバック送信エラー: {e}", exc_info=True)

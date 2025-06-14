@@ -1,7 +1,8 @@
+#!/usr/bin/env python3
 import logging
 import threading
 
-from pythonosc import dispatcher, osc_server
+from pythonosc import dispatcher, osc_server, udp_client
 
 from snoreguard.vrc.osc_query_service import OSCQueryService
 from snoreguard.vrc.mdns_client import OSCQueryServiceFinder
@@ -10,33 +11,19 @@ logger = logging.getLogger(__name__)
 
 
 class VRChatOSCReceiver:
-    """
-    VRChatからのOSCメッセージを受信するクラス
-    - VRChatのアバターパラメータ「MuteSelf」を監視し、
-    - ユーザーのマイク状態の変化をリアルタイムで検知する
-    """
+    """VRChatからのOSCメッセージを受信するクラス"""
 
-    def __init__(self, port, mute_callback, log_callback):
-        """
-        VRChatOSCReceiverを初期化
-        - port: OSCメッセージを受信するポート番号
-        - mute_callback: ミュート状態変化時のコールバック関数
-        - log_callback: ログ出力用コールバック関数
-        """
+    def __init__(self, port, app_instance, log_callback):
         logger.debug(f"VRChatOSCReceiver初期化 - port: {port}")
         self.port = port
-        self.mute_callback = mute_callback
+        self.app_instance = app_instance
         self.log_callback = log_callback
         self.server = None
         self.is_running = False
         self._server_thread = None
 
     def start(self):
-        """
-        OSCメッセージの受信を開始
-        - マルチスレッドOSCサーバーを起動し、VRChatからの
-        - アバターパラメータ更新メッセージを待機する
-        """
+        """OSCメッセージの受信を開始"""
         logger.debug(f"OSC受信開始要求 - port: {self.port}")
         if self.is_running:
             logger.warning("OSC受信既に実行中")
@@ -44,6 +31,18 @@ class VRChatOSCReceiver:
         try:
             dispatcher_obj = dispatcher.Dispatcher()
             dispatcher_obj.map("/avatar/parameters/MuteSelf", self._mute_handler)
+            # SnoreGuard OSC入力ハンドラー
+            dispatcher_obj.map(
+                "/avatar/parameters/SnoreGuard/ToggleDetection",
+                self._toggle_detection_handler,
+            )
+            dispatcher_obj.map(
+                "/avatar/parameters/SnoreGuard/SetNotification",
+                self._set_notification_handler,
+            )
+            dispatcher_obj.map(
+                "/avatar/parameters/SnoreGuard/SetAutoMute", self._set_auto_mute_handler
+            )
             self.server = osc_server.ThreadingOSCUDPServer(
                 ("127.0.0.1", self.port), dispatcher_obj
             )
@@ -61,10 +60,7 @@ class VRChatOSCReceiver:
                 self.log_callback(f"OSC受信エラー: {e}", "error")
 
     def stop(self):
-        """
-        OSCメッセージの受信を停止
-        - サーバーをシャットダウンし、スレッドの終了を待機する
-        """
+        """OSCメッセージの受信を停止"""
         logger.debug("OSC受信停止要求")
         if not self.is_running:
             logger.debug("OSC受信既に停止中")
@@ -81,51 +77,68 @@ class VRChatOSCReceiver:
             self.log_callback("OSC受信: 停止", "osc")
 
     def _mute_handler(self, address: str, is_muted: bool):
-        """
-        VRChatからのミュート状態変化メッセージを処理
-        - address: OSCアドレス（/avatar/parameters/MuteSelf）
-        - is_muted: ミュート状態（True=ミュート、False=ミュート解除）
-        """
+        """VRChatからのミュート状態変化メッセージを処理"""
         if self.log_callback:
             self.log_callback(
                 f"VRChatからマイク状態通知: {'ミュート' if is_muted else 'ミュート解除'} 🎤",
                 "vrchat",
             )
-        if self.mute_callback:
-            self.mute_callback(is_muted)
+        if self.app_instance:
+            self.app_instance.on_vrchat_mute_change(is_muted)
+
+    def _toggle_detection_handler(self, address: str, value: bool):
+        """VRChatからの検出トグルメッセージを処理"""
+        if self.log_callback:
+            self.log_callback(
+                f"VRChatから検出{'開始' if value else '停止'}通知: {value} 🎵",
+                "vrchat",
+            )
+        if self.app_instance:
+            # 現在の状態と異なる場合のみ処理
+            if value and not self.app_instance.is_running:
+                self.app_instance._start_detection()
+            elif not value and self.app_instance.is_running:
+                self.app_instance._stop_detection()
+
+    def _set_notification_handler(self, address: str, value: bool):
+        """VRChatからの通知設定メッセージを処理"""
+        if self.log_callback:
+            self.log_callback(
+                f"VRChatから通知{'ON' if value else 'OFF'}通知: {value} 🔔",
+                "vrchat",
+            )
+        if self.app_instance:
+            self.app_instance.set_notification_from_osc(value)
+
+    def _set_auto_mute_handler(self, address: str, value: bool):
+        """VRChatからの自動ミュート設定メッセージを処理"""
+        if self.log_callback:
+            self.log_callback(
+                f"VRChatから自動ミュート{'ON' if value else 'OFF'}通知: {value} 🔇",
+                "vrchat",
+            )
+        if self.app_instance:
+            self.app_instance.set_auto_mute_from_osc(value)
 
 
 class VRCHandler:
-    """
-    VRChatとのOSC通信全体を統合管理するメインハンドラークラス。
-    - OSCQueryサービス、OSCメッセージ受信、mDNSサービス探索などの
-      VRChat連携機能を一元管理し、いびき検出時の自動ミュート機能を提供
-    """
+    """VRChatとのOSC通信全体を統合管理するメインハンドラークラス"""
 
-    def __init__(self, status_callback, mute_callback, log_callback):
-        """
-        VRCHandlerを初期化
-        - status_callback: VRChat接続状態変化時のコールバック関数
-        - mute_callback: ミュート状態変化時のコールバック関数
-        - log_callback: ログ出力用コールバック関数
-        """
+    def __init__(self, status_callback, app_instance, log_callback):
         logger.debug("VRCHandler初期化開始")
         self.log_callback = log_callback
-        # VRChat連携の主要コンポーネントを初期化
-        self.osc_service = OSCQueryService(status_callback, mute_callback, log_callback)
-        self.osc_receiver = VRChatOSCReceiver(
-            9001, mute_callback, log_callback
-        )  # 標準ポート使用
+        self.app_instance = app_instance
+        self.osc_service = OSCQueryService(
+            status_callback, app_instance.on_vrchat_mute_change, log_callback
+        )
+        self.osc_receiver = VRChatOSCReceiver(9001, app_instance, log_callback)
         self.oscquery_finder = OSCQueryServiceFinder(
             self.on_vrchat_discovered, log_callback
         )
         logger.debug("VRCHandler初期化完了")
 
     def start(self):
-        """
-        - すべてのVRChat連携サービスを開始
-        - OSCQueryサービス、OSCメッセージ受信、mDNSサービス探索を同時に開始
-        """
+        """すべてのVRChat連携サービスを開始"""
         logger.debug("VRCHandler開始")
         self.osc_service.start()
         self.osc_receiver.start()
@@ -133,10 +146,7 @@ class VRCHandler:
         logger.info("VRCHandler開始完了")
 
     def stop(self):
-        """
-        - すべてのVRChat連携サービスを停止
-        - 各サービスの停止処理を順序実行し、リソースをクリーンアップ
-        """
+        """すべてのVRChat連携サービスを停止"""
         logger.debug("VRCHandler停止")
         self.osc_service.stop()
         self.osc_receiver.stop()
@@ -144,37 +154,43 @@ class VRCHandler:
         logger.info("VRCHandler停止完了")
 
     def toggle_mute(self):
-        """
-        VRChat内でマイクのミュート/ミュート解除を実行
-        - いびき検出時に自動的に呼び出され、VRChatのVoiceボタンを
-        - シミュレートしてマイクを一時的にミュートする
-        """
+        """VRChat内でマイクのミュート/ミュート解除を実行"""
         logger.debug("VRChatミュートトグル要求")
         self.osc_service.toggle_voice()
 
     def on_vrchat_discovered(self, service_info):
-        """
-        mDNSでVRChatのOSCQueryサービスが発見された時の処理
-        - 発見されたサービス情報からOSCポートを取得し、
-          OSCクライアントの接続先を動的に更新する
-        - service_info: mDNSで発見されたサービスの情報
-        """
+        """mDNSでVRChatのOSCQueryサービスが発見された時の処理"""
         logger.debug(f"VRChatサービス発見: {service_info}")
         if service_info.get("osc_port"):
-            # 発見されたサービス情報から接続先を取得
             host = (
                 service_info["ip_addresses"][0]
                 if service_info["ip_addresses"]
-                else "127.0.0.1"  # フォールバック先
+                else "127.0.0.1"
             )
             port = service_info["osc_port"]
             logger.info(f"VRChat OSCサービス接続更新: {host}:{port}")
 
-            # OSCサービスの接続先を動的更新
-            self.osc_service.vrchat_host = host
-            self.osc_service.vrchat_osc_port = port
-            from pythonosc import udp_client
-
-            self.osc_service.osc_client = udp_client.SimpleUDPClient(host, port)
-            self.osc_service.found_service = True
+            self._update_osc_service_connection(host, port)
             self.log_callback(f"OSCQuery接続更新: {host}:{port} ✅", "osc")
+
+    def send_feedback(self, address: str, value):
+        """VRChatへ状態フィードバックを送信"""
+        try:
+            if self.osc_service and self.osc_service.osc_client:
+                self.osc_service.osc_client.send_message(address, value)
+                logger.debug(f"OSCフィードバック送信: {address} = {value}")
+            else:
+                logger.warning(
+                    f"OSCクライアントが初期化されていません: {address} = {value}"
+                )
+        except Exception as e:
+            logger.error(f"OSCフィードバック送信エラー: {e}", exc_info=True)
+            if self.log_callback:
+                self.log_callback(f"OSCフィードバック送信エラー: {e}", "error")
+
+    def _update_osc_service_connection(self, host: str, port: int):
+        """OSCサービスの接続先を更新"""
+        self.osc_service.vrchat_host = host
+        self.osc_service.vrchat_osc_port = port
+        self.osc_service.osc_client = udp_client.SimpleUDPClient(host, port)
+        self.osc_service.found_service = True
