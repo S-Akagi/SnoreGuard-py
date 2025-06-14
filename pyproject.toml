@@ -1,6 +1,6 @@
 [project]
 name = "snoreguard-py"
-version = "v1.4.0-beta.1"
+version = "1.4.0-beta.2"
 description = "snoreguard by python"
 readme = "README.md"
 requires-python = ">=3.10"
