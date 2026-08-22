@@ -137,6 +137,10 @@ class SnoreGuardApp:
         # UI設定更新は少し遅らせて実行（UI要素が完全に準備されるまで待つ）
         self.root.after(100, self._update_ui_with_settings)
 
+        # 壊れた設定ファイルを初期化した場合は利用者へ通知
+        if self.settings_manager.last_error:
+            self.root.after(1500, self._notify_settings_recovery)
+
         # VRChatハンドラー開始
         self.vrc_handler.start()
         logger.debug("VRCハンドラー開始")
@@ -719,6 +723,12 @@ class SnoreGuardApp:
                 self.mic_combobox.configure(values=[])
         except (AttributeError, NameError):
             pass
+
+    def _notify_settings_recovery(self):
+        """壊れた設定ファイルを初期化したことを利用者に知らせる"""
+        message = self.settings_manager.last_error or ""
+        self.add_log(message, "warning")
+        messagebox.showwarning("設定ファイルを初期化しました", message)
 
     def _update_ui_with_settings(self):
         """設定UI更新"""
