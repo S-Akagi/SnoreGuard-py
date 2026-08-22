@@ -66,6 +66,7 @@ logger = logging.getLogger(__name__)
 # アプリケーションクラス
 class SnoreGuardApp:
     RESTART_DELAYS_S = (5, 10, 20, 40, 60)  # 異常終了後の自動再開の待ち時間
+    SILENCE_WARN_AFTER_S = 60  # この秒数 RMS がゼロなら警告
 
     def __init__(self, root: ctk.CTk):
         logger.debug("SnoreGuardApp初期化開始")
@@ -85,6 +86,8 @@ class SnoreGuardApp:
         self.initialization_progress = 0  # 初期化進捗
         self._restart_attempt = 0  # 音声ストリーム異常終了後の再開試行回数
         self._restart_after_id = None
+        self._last_sound_time = None  # 無音ウォッチドッグ用
+        self._silence_warned = False
 
         # 設定マネージャー初期化
         self.settings_manager = SettingsManager(Path(SETTINGS_FILE))
@@ -299,6 +302,8 @@ class SnoreGuardApp:
     def _finalize_detection_start(self, selected_mic_name: str):
         """初期化完了後のUI状態更新とビジュアル開始"""
         self._restart_attempt = 0
+        self._last_sound_time = datetime.now()
+        self._silence_warned = False
         self.is_running = True
         self.is_initializing = False
         self._update_control_state()
@@ -530,6 +535,34 @@ class SnoreGuardApp:
         except (AttributeError, NameError):
             pass
         self._update_detailed_status(res)
+        self._check_silence(res)
+
+    def _check_silence(self, res: dict):
+        """一定時間 RMS がゼロなら、マイクが無音であることを知らせる"""
+        results = res.get("analysis_results") or {}
+        rms = results.get("rms")
+        now = datetime.now()
+        if rms is not None and len(rms) > 0 and float(np.max(rms)) > 1e-6:
+            self._last_sound_time = now
+            if self._silence_warned:
+                self._silence_warned = False
+                self.add_log("音声入力を再び検知しました。", "system")
+            return
+        if self._last_sound_time is None:
+            self._last_sound_time = now
+            return
+        if (
+            not self._silence_warned
+            and (now - self._last_sound_time).total_seconds()
+            > self.SILENCE_WARN_AFTER_S
+        ):
+            self._silence_warned = True
+            self.add_log(
+                "60秒以上無音です。マイクの接続と Windows のマイクのプライバシー設定を確認してください。",
+                "warning",
+            )
+            self.status_label_var.set("⚠ 無音が続いています")
+
     def _draw_plots(self):
         """プロット更新"""
         self.waveform_line.set_ydata(self.display_buffer)
