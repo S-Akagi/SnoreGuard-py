@@ -774,6 +774,12 @@ class SnoreGuardApp:
         changes = self.rule_settings.diff(sanitized)
         self.rule_settings.copy_from(sanitized)
         self._update_rule_settings_ui()
+        try:
+            self.periodicity_status_var.set(
+                f"0 / {self.rule_settings.periodicity_event_count}"
+            )
+        except (AttributeError, tk.TclError):
+            pass
         self.audio_service.reset_processor_periodicity()
         self._save_app_settings(send_feedback=False)
         if changes:
@@ -787,7 +793,7 @@ class SnoreGuardApp:
             self.add_log(f"{source}: 変更された設定項目はありません", "info")
 
     def reset_settings(self):
-        """設定をデフォルト値にリセット"""
+        """ルール設定をデフォルト値にリセット（スケジューラ等は Phase 2 で対応）"""
         if not messagebox.askyesno(
             "設定のリセット", "ルール設定をすべて初期値に戻します。よろしいですか？"
         ):
