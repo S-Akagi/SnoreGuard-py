@@ -81,24 +81,17 @@ SnoreGuardは、以下のステップでいびきを分析・検出していま�
 * VRChatの利用規約を遵守してご使用ください。
 * 本アプリケーションの使用によって生じたいかなる損害についても、開発者は責任を負いません。詳細は[利用規約](./docs/TERMS_OF_USE.md)をご確認ください。
 
-## 開発者向け情報
+## 開発者向け: ソースから実行・ビルドする
 
-### ビルド方法
+Python 3.11 以上と [uv](https://docs.astral.sh/uv/) が必要です。
 
-1.  Python 3.10環境を準備します。
-2.  リポジトリをクローンします。
-3.  依存ライブラリをインストールします。
-    ```bash
-    pip install -r requirements.txt
-    ```
-4.  アプリケーションを実行します。
-    ```bash
-    python src/main.py
-    ```
-5.  実行ファイルをビルドする場合 (PyInstallerを使用):
-    ```bash
-    pyinstaller --noconfirm --onefile --windowed --add-data "src/assets;assets" --icon "src/assets/icon/icon.ico" "src/main.py"
-    ```
+```bash
+uv sync --locked --all-groups   # 依存関係を lock どおりに導入
+uv run --no-sync python src/main.py   # 実行
+uv run --no-sync pytest -q      # テスト
+```
+
+Windows 用の実行ファイルは `scripts\build.bat` で作成します（`dist\SnoreGuard.exe`）。
 
 ## ライセンス
 
