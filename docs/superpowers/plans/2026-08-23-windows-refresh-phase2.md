@@ -10,6 +10,12 @@
 
 **Spec:** `docs/superpowers/specs/2026-08-23-windows-refresh-audit.md`（課題 06〜14 および 16 の一部）
 
+## 実行状況（2026-08-23 時点）
+
+**未着手。** 前提の Phase 1 は Task 8 まで完了（HEAD `d3ec881`）、Task 9〜12 が残っている。
+Phase 1 を完了させてから本計画に着手すること。Task 14 冒頭に Phase 1 Task 8 からの
+持ち越し 2 件（再試行ラダー・初期化中のストリーム死亡）を明記済み。
+
 ## Global Constraints
 
 Phase 1 計画の Global Constraints をそのまま適用する（Python 3.11、uv、コミットに Claude 表記なし、`type: 日本語要約`、各タスク末尾で ruff、GUI 変更は import スモーク）。加えて:
@@ -317,6 +323,29 @@ git commit -m "fix: リセットでスケジューラ停止と通知/自動ミ�
 ---
 
 ### Task 14: スケジューラのレベル評価・非対話経路の再試行・開始/停止ガード
+
+**Phase 1 Task 8 からの持ち越し（このタスクで必ず解消する）:**
+
+1. **再試行ラダーが 1 回で止まる。** Phase 1 で入れた `RESTART_DELAYS_S = (5, 10, 20, 40, 60)` の
+   自動再開は、`_retry_start_detection` → `_start_detection` → `_initialize_audio_system` の
+   デバイス事前テスト（`sd.InputStream(...)`）が失敗すると `_handle_initialization_error` の
+   modal `messagebox` で止まり、2 回目以降の遅延と諦め時の `notify.beep(600, 500)` に到達しない。
+   本タスクの `origin` 引数（非対話経路ではダイアログを出さず `_schedule_scheduler_retry`）で解消すること。
+   `_retry_start_detection` は `self._start_detection(origin="retry")` を呼ぶよう更新する。
+2. **初期化中のストリーム死亡が握り潰される。** `audio_service.start()` 直後から
+   `_finalize_detection_start` までの窓でワーカーが死ぬと、`_handle_stream_stopped` は
+   `app.is_running == False` のため早期 return し、UI は「検出中」のまま動かない検出器が残る。
+   `_finalize_detection_start` の先頭に次のガードを追加すること:
+
+```python
+        if not self.audio_service.is_running:
+            error = self.audio_service.last_error or "音声ストリームを開始できませんでした"
+            self.is_initializing = False
+            self._handle_initialization_error(error, origin)
+            return
+```
+   （`_finalize_detection_start` は `origin` を受け取るよう `_initialize_audio_system` 側の
+   `self.root.after(0, self._finalize_detection_start, selected_mic_name, origin)` に合わせる。）
 
 **Files:**
 - Modify: `src/snoreguard/time_scheduler.py`（全体）
@@ -655,6 +684,11 @@ git commit -m "fix: 無人経路（スケジューラ/OSC）の開始失敗は�
 ---
 
 ### Task 15: VRChat 接続状態を実測で表示し、検出状態ラベルと分離する
+
+**Phase 1 Task 8 からの持ち越し（Minor）:** `_check_silence` は無音検知時に
+`status_label_var` を「⚠ 無音が続いています」にするが、音声が戻っても復帰ログを出すだけで
+文言を戻さない。本タスクで `_set_detection_status` を導入する際、復帰分岐（`_silence_warned`
+を False に戻す箇所）で `self._set_detection_status("🔊 検出中...", "#1F6AA5")` を呼ぶこと。
 
 **Files:**
 - Modify: `src/snoreguard/vrc/handler.py`（`VRChatOSCReceiver` に受信時刻、`VRCHandler.connection_state`）

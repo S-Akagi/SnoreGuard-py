@@ -10,6 +10,46 @@
 
 **Spec:** `docs/superpowers/specs/2026-08-23-windows-refresh-audit.md`
 
+## 実行状況（2026-08-23 時点・中断）
+
+**Task 1〜8 完了。Task 9〜12 未着手。** ブランチ `feature/windows-refresh`、HEAD `d3ec881`。
+全 43 テスト green、`ruff check` / `ruff format --check` クリーン、作業ツリーもクリーン。
+
+| Task | 状態 | コミット |
+|---|---|---|
+| 1. pyproject / CI / テスト基盤 | ✅ レビュー合格 | `ca7b656`, `0b92053` |
+| 2. `winsound` の隔離（`snoreguard.notify`） | ✅ レビュー合格 | `8df5f6a` |
+| 3. ファイルログと例外フック | ✅ 修正1回で合格 | `f52cd76`, `ca923a5` |
+| 4. 設定ファイル読込の堅牢化 | ✅ レビュー合格 | `b0cd843` |
+| 5. `RuleSettings` の検証・クランプ・コピー | ✅ 修正1回で合格 | `9c51360`, `e44b19e` |
+| 6. 参照ズレの修正と相互制約の UI 適用 | ✅ 修正1回で合格 | `8c6492f`, `d52e511` |
+| 7. 特徴量フォールバックの廃止 | ✅ レビュー合格 | `a15a389` |
+| 8. ストリーム停止の伝播・自動再開・無音監視 | ✅ レビュー合格（下記 2 点を Phase 2 に持ち越し） | `c8d8aab`, `d3ec881` |
+| 9. ミュート判断ポリシー・受信ポート・単一起動 | ⬜ 未着手 | — |
+| 10. チャンク跨ぎセグメント・間隔検証・フィルタ状態 | ⬜ 未着手 | — |
+| 11. pyin の広帯域化 | ⬜ 未着手 | — |
+| 12. Phase 1 の仕上げ | ⬜ 未着手 | — |
+
+**再開方法:** `docs/superpowers/plans/2026-08-23-windows-refresh-phase1.md` の Task 9 から
+superpowers:subagent-driven-development で続行する。台帳は
+`.superpowers/sdd/2026-08-23-windows-refresh-phase1/progress.md`（git 管理外）にあり、
+各タスクのブリーフ・実装レポート・レビュー差分も同じディレクトリに残っている。
+
+### Task 8 から Phase 2 への持ち越し（レビュー指摘・要対応）
+
+Phase 2 の Task 14（スケジューラのレベル評価・非対話経路の再試行）で必ず解消すること。
+
+1. **再試行ラダーが 1 回で止まる。** `_retry_start_detection` → `_start_detection` →
+   `_initialize_audio_system` のデバイス事前テストが失敗すると `_handle_initialization_error` が
+   modal `messagebox` を出して終わり、`RESTART_DELAYS_S` の 10/20/40/60 秒と諦め時のビープに到達しない。
+   Task 14 の `origin` 引数（非対話経路ではダイアログを出さず再試行）で解消する。
+2. **初期化中のストリーム死亡が握り潰される。** `audio_service.start()` 直後〜
+   `_finalize_detection_start` までの窓でワーカーが死ぬと、`_handle_stream_stopped` は
+   `app.is_running == False` のため早期 return し、UI は「検出中」のまま。
+   `_finalize_detection_start` で `audio_service.is_running` / `last_error` を確認するガードを追加する。
+3. （Minor）`_check_silence` の復帰時に `status_label_var` が「⚠ 無音が続いています」のまま戻らない。
+   Task 15 の `_set_detection_status` 導入時に併せて直す。
+
 ## Global Constraints
 
 - Python `>=3.11`。依存は uv 管理（`uv.lock` をコミット）。`uv run` は常に `--no-sync` か `uv sync --locked` 後に実行。
@@ -58,7 +98,7 @@
 **Interfaces:**
 - Produces: `[tool.pytest.ini_options] pythonpath=["src"]`（以降のテストはすべて `from core... / from snoreguard...` で import できる）、dependency group `dev`（ruff, pytest）と `build`（pyinstaller）。
 
-- [ ] **Step 1: pyproject.toml を書き換える**
+- [x] **Step 1: pyproject.toml を書き換える**
 
 `[project]` と `[dependency-groups]`、ruff、pytest の部分を以下にする（`[tool.ruff]` の `exclude`/`format` ブロックは既存のまま残す）:
 
@@ -98,12 +138,12 @@ filterwarnings = ["ignore::UserWarning:librosa"]
 
 `[tool.ruff]` の `target-version = "py310"` を `target-version = "py311"` に変更する。`[tool.ruff.lint]` は変更しない。
 
-- [ ] **Step 2: lock を更新して同期する**
+- [x] **Step 2: lock を更新して同期する**
 
 Run: `uv lock && uv sync --locked --all-groups`
 Expected: `Resolved ... packages`、エラーなし。`uv run --no-sync python -c "import pytest, PyInstaller, packaging; print('ok')"` が `ok`。
 
-- [ ] **Step 3: スモークテストを書く**
+- [x] **Step 3: スモークテストを書く**
 
 `tests/__init__.py` は空ファイル。`tests/test_smoke.py`:
 
@@ -123,12 +163,12 @@ def test_service_imports():
     import snoreguard.vrc.mdns_client  # noqa: F401
 ```
 
-- [ ] **Step 4: テストを実行して通ることを確認**
+- [x] **Step 4: テストを実行して通ることを確認**
 
 Run: `uv run --no-sync pytest -q`
 Expected: `2 passed`
 
-- [ ] **Step 5: requirements.txt を削除し、ビルド手順を一本化する**
+- [x] **Step 5: requirements.txt を削除し、ビルド手順を一本化する**
 
 `git rm requirements.txt`。
 
@@ -169,7 +209,7 @@ uv run --no-sync pytest -q      # テスト
 Windows 用の実行ファイルは `scripts\build.bat` で作成します（`dist\SnoreGuard.exe`）。
 ```
 
-- [ ] **Step 6: CI を uv 化し Windows ジョブを追加する**
+- [x] **Step 6: CI を uv 化し Windows ジョブを追加する**
 
 `.github/workflows/CI.yml` を以下に置き換える:
 
@@ -214,12 +254,12 @@ jobs:
           path: dist/
 ```
 
-- [ ] **Step 7: lint / format を通す**
+- [x] **Step 7: lint / format を通す**
 
 Run: `uv run --no-sync ruff check . && uv run --no-sync ruff format .`
 Expected: `All checks passed!`
 
-- [ ] **Step 8: コミット（2 つに分ける）**
+- [x] **Step 8: コミット（2 つに分ける）**
 
 ```bash
 git add pyproject.toml uv.lock tests/__init__.py tests/test_smoke.py
@@ -241,7 +281,7 @@ git commit -m "ci: uv ベースの lint/test と Windows ビルドスモーク�
 **Interfaces:**
 - Produces: `snoreguard.notify.beep(frequency: int = 1000, duration_ms: int = 200) -> None`（非同期、Windows 以外は no-op、例外を外に出さない）
 
-- [ ] **Step 1: 失敗するテストを書く**
+- [x] **Step 1: 失敗するテストを書く**
 
 `tests/test_notify.py`:
 
@@ -278,12 +318,12 @@ def test_beep_swallows_winsound_errors(monkeypatch):
     thread.join(timeout=2)  # 例外はスレッド内で握られ、ここには伝播しない
 ```
 
-- [ ] **Step 2: 失敗を確認**
+- [x] **Step 2: 失敗を確認**
 
 Run: `uv run --no-sync pytest tests/test_notify.py -q`
 Expected: FAIL（`ModuleNotFoundError: No module named 'snoreguard.notify'`）
 
-- [ ] **Step 3: 実装**
+- [x] **Step 3: 実装**
 
 `src/snoreguard/notify.py`:
 
@@ -340,12 +380,12 @@ def beep(frequency: int = 1000, duration_ms: int = 200) -> threading.Thread | No
         )
 ```
 
-- [ ] **Step 4: テストと import スモーク**
+- [x] **Step 4: テストと import スモーク**
 
 Run: `uv run --no-sync pytest tests/test_notify.py -q && uv run --no-sync python -c "import sys; sys.path.insert(0,'src'); import snoreguard.app; print('import ok')"`
 Expected: `3 passed` と `import ok`（macOS でも app.py が import できるようになる）
 
-- [ ] **Step 5: コミット**
+- [x] **Step 5: コミット**
 
 ```bash
 uv run --no-sync ruff check . && uv run --no-sync ruff format .
@@ -371,7 +411,7 @@ git commit -m "refactor: winsound を notify モジュールに隔離し、ミ�
   - `logging_setup.install_tk_report_callback(root) -> None`
   - `logging_setup.show_fatal_error(message: str) -> None`（Tk の messagebox を出す。失敗しても例外を出さない）
 
-- [ ] **Step 1: 失敗するテストを書く**
+- [x] **Step 1: 失敗するテストを書く**
 
 `tests/test_logging_setup.py`:
 
@@ -421,12 +461,12 @@ def test_install_excepthooks_logs_thread_exception(tmp_path):
     assert "thread failure" in log_file.read_text(encoding="utf-8")
 ```
 
-- [ ] **Step 2: 失敗を確認**
+- [x] **Step 2: 失敗を確認**
 
 Run: `uv run --no-sync pytest tests/test_logging_setup.py -q`
 Expected: FAIL（ModuleNotFoundError）
 
-- [ ] **Step 3: 実装**
+- [x] **Step 3: 実装**
 
 `src/snoreguard/logging_setup.py`:
 
@@ -650,12 +690,12 @@ if __name__ == "__main__":
 
 ファイル先頭に `import logging` と `logger = logging.getLogger(__name__)` を追加する。
 
-- [ ] **Step 4: テストと import スモーク**
+- [x] **Step 4: テストと import スモーク**
 
 Run: `uv run --no-sync pytest tests/test_logging_setup.py -q && uv run --no-sync python -c "import sys; sys.path.insert(0,'src'); import main; print('import ok')"`
 Expected: `4 passed`、`import ok`（`~/.snoreguard/logs/snoreguard.log` が作られる）
 
-- [ ] **Step 5: コミット**
+- [x] **Step 5: コミット**
 
 ```bash
 uv run --no-sync ruff check . && uv run --no-sync ruff format .
@@ -675,7 +715,7 @@ git commit -m "feat: ローテーション付きファイルログと未捕捉�
 **Interfaces:**
 - Produces: `SettingsManager.last_error: str | None`（直近の load で壊れたファイルを退避した場合のメッセージ）、`SettingsManager.backup_path: Path | None`
 
-- [ ] **Step 1: 失敗するテストを書く**
+- [x] **Step 1: 失敗するテストを書く**
 
 `tests/test_settings_manager.py`:
 
@@ -730,12 +770,12 @@ def test_invalid_json_is_backed_up(tmp_path):
     assert sm.backup_path.name.endswith(".bak")
 ```
 
-- [ ] **Step 2: 失敗を確認**
+- [x] **Step 2: 失敗を確認**
 
 Run: `uv run --no-sync pytest tests/test_settings_manager.py -q`
 Expected: 3 件 FAIL（`last_error` 属性なし、UnicodeDecodeError が伝播）
 
-- [ ] **Step 3: 実装**
+- [x] **Step 3: 実装**
 
 `settings_manager.py` の `__init__` に次を追加:
 
@@ -816,12 +856,12 @@ Expected: 3 件 FAIL（`last_error` 属性なし、UnicodeDecodeError が伝播�
         messagebox.showwarning("設定ファイルを初期化しました", message)
 ```
 
-- [ ] **Step 4: テスト**
+- [x] **Step 4: テスト**
 
 Run: `uv run --no-sync pytest tests/test_settings_manager.py -q`
 Expected: `5 passed`
 
-- [ ] **Step 5: コミット**
+- [x] **Step 5: コミット**
 
 ```bash
 uv run --no-sync ruff check . && uv run --no-sync ruff format .
@@ -848,7 +888,7 @@ git commit -m "fix: 壊れた設定ファイルを .bak に退避して既定値
   - `RuleSettings.validate() -> list[str]`（問題点の説明、空なら OK）
   - `RuleSettings.diff(other) -> list[tuple[str, str, Any, Any]]`（(name, label, old, new) 変更のみ）
 
-- [ ] **Step 1: 失敗するテストを書く**
+- [x] **Step 1: 失敗するテストを書く**
 
 `tests/test_rule_settings.py`:
 
@@ -916,12 +956,12 @@ def test_diff_lists_changed_fields_only():
     assert d == [("zcr_threshold", FIELD_LABELS["zcr_threshold"], 0.06, 0.1)]
 ```
 
-- [ ] **Step 2: 失敗を確認**
+- [x] **Step 2: 失敗を確認**
 
 Run: `uv run --no-sync pytest tests/test_rule_settings.py -q`
 Expected: ImportError（`SLIDER_RANGES` なし）
 
-- [ ] **Step 3: 実装**
+- [x] **Step 3: 実装**
 
 `src/core/settings.py` を以下に置き換える:
 
@@ -1093,12 +1133,12 @@ class TimeSchedulerSettings:
         ]
 ```
 
-- [ ] **Step 4: テスト**
+- [x] **Step 4: テスト**
 
 Run: `uv run --no-sync pytest tests/test_rule_settings.py -q`
 Expected: `8 passed`
 
-- [ ] **Step 5: コミット**
+- [x] **Step 5: コミット**
 
 ```bash
 uv run --no-sync ruff check . && uv run --no-sync ruff format .
@@ -1119,7 +1159,7 @@ git commit -m "feat: RuleSettings に copy_from/from_dict/sanitized/validate/dif
 - Consumes: Task 5 の `copy_from / from_dict / sanitized / diff / format_setting_value`
 - Produces: `SnoreGuardApp.apply_rule_settings(new: RuleSettings, source: str) -> None`（唯一の「ルール設定を置き換える」入口。UI・共有オブジェクト・保存を一括で行う）
 
-- [ ] **Step 1: 失敗するテストを書く（検出器が共有オブジェクトの更新を見ること）**
+- [x] **Step 1: 失敗するテストを書く（検出器が共有オブジェクトの更新を見ること）**
 
 `tests/test_settings_sharing.py`:
 
@@ -1148,12 +1188,12 @@ def test_mask_processor_sees_copy_from_updates():
     assert final_after.all()
 ```
 
-- [ ] **Step 2: 失敗しないことを確認（これは回帰防止テスト。現状でも通る）**
+- [x] **Step 2: 失敗しないことを確認（これは回帰防止テスト。現状でも通る）**
 
 Run: `uv run --no-sync pytest tests/test_settings_sharing.py -q`
 Expected: `1 passed`（通ることを確認してから app.py を直す）
 
-- [ ] **Step 3: app.py の配線を直す**
+- [x] **Step 3: app.py の配線を直す**
 
 `app.py` の import に `from core.settings import RuleSettings, TimeSchedulerSettings, format_setting_value` を追加（既存の `from core.settings import RuleSettings, TimeSchedulerSettings` を置き換え）。
 
@@ -1290,12 +1330,12 @@ Expected: `1 passed`（通ることを確認してから app.py を直す）
             logger.error(f"変更内容表示エラー: {e}", exc_info=True)
 ```
 
-- [ ] **Step 4: テストと import スモーク**
+- [x] **Step 4: テストと import スモーク**
 
 Run: `uv run --no-sync pytest -q && uv run --no-sync python -c "import sys; sys.path.insert(0,'src'); import snoreguard.app, snoreguard.calibration_modal; print('import ok')"`
 Expected: 全 PASS、`import ok`。`grep -n "self.rule_settings = " src/snoreguard/app.py` の結果が `__init__` の 1 箇所のみであること。
 
-- [ ] **Step 5: コミット**
+- [x] **Step 5: コミット**
 
 ```bash
 uv run --no-sync ruff check . && uv run --no-sync ruff format .
@@ -1314,7 +1354,7 @@ git commit -m "fix: リセット/キャリブレーション適用時に RuleSet
 **Interfaces:**
 - Produces: `core.rule_processor.FeatureExtractionError(RuntimeError)`; `RuleBasedProcessor.process_audio_chunk()` は特徴量抽出に失敗したとき **例外を出さず `{}` を返す**。
 
-- [ ] **Step 1: 失敗するテストを書く**
+- [x] **Step 1: 失敗するテストを書く**
 
 `tests/test_rule_processor_errors.py`:
 
@@ -1346,12 +1386,12 @@ def test_process_audio_chunk_returns_81_frames_for_one_second():
     assert len(result["final_mask_frames"]) == 81
 ```
 
-- [ ] **Step 2: 失敗を確認**
+- [x] **Step 2: 失敗を確認**
 
 Run: `uv run --no-sync pytest tests/test_rule_processor_errors.py -q`
 Expected: ImportError（`FeatureExtractionError` なし）
 
-- [ ] **Step 3: 実装**
+- [x] **Step 3: 実装**
 
 `src/core/rule_processor.py` の `FeatureExtractor` クラス全体を以下に置き換える（`_fallback_*` は削除）:
 
@@ -1431,12 +1471,12 @@ class FeatureExtractor:
 
 （`if not features: return {}` の行は削除。以降は既存どおり。）
 
-- [ ] **Step 4: テスト**
+- [x] **Step 4: テスト**
 
 Run: `uv run --no-sync pytest tests/test_rule_processor_errors.py -q`
 Expected: `3 passed`
 
-- [ ] **Step 5: コミット**
+- [x] **Step 5: コミット**
 
 ```bash
 uv run --no-sync ruff check . && uv run --no-sync ruff format .
@@ -1459,7 +1499,7 @@ git commit -m "fix: 形状不整合を起こす特徴量フォールバックを
   - `AudioService.last_error: str | None`
   - `SnoreGuardApp._on_audio_stream_stopped(error)`（スレッド → safe_after）、`SnoreGuardApp._handle_stream_stopped(error)`（メインスレッド）、`SnoreGuardApp.RESTART_DELAYS_S = (5, 10, 20, 40, 60)`
 
-- [ ] **Step 1: 失敗するテストを書く**
+- [x] **Step 1: 失敗するテストを書く**
 
 `tests/test_audio_service.py`:
 
@@ -1551,12 +1591,12 @@ def test_normal_stop_reports_none(monkeypatch):
     assert stopped == [None]
 ```
 
-- [ ] **Step 2: 失敗を確認**
+- [x] **Step 2: 失敗を確認**
 
 Run: `uv run --no-sync pytest tests/test_audio_service.py -q`
 Expected: TypeError（`on_stream_stopped` 引数なし）
 
-- [ ] **Step 3: AudioService を実装**
+- [x] **Step 3: AudioService を実装**
 
 `__init__` のシグネチャと本体に追加:
 
@@ -1615,7 +1655,7 @@ Expected: TypeError（`on_stream_stopped` 引数なし）
 
 （旧実装の `finally` 内 `self.log_callback("オーディオストリームを停止しました。", "system")` は削除する。停止ログは App 側で出す。Tk を同期呼び出しする `log_callback` をワーカー終了経路から外すことが Phase 2 のスレッド規律の前提になる。）
 
-- [ ] **Step 4: App 側を配線**
+- [x] **Step 4: App 側を配線**
 
 `app.py` `__init__` の `AudioService(...)` 生成に `on_stream_stopped=self._on_audio_stream_stopped,` を追加。`__init__` の状態変数に追加:
 
@@ -1715,12 +1755,12 @@ Expected: TypeError（`on_stream_stopped` 引数なし）
             self.status_label_var.set("⚠ 無音が続いています")
 ```
 
-- [ ] **Step 5: テストと import スモーク**
+- [x] **Step 5: テストと import スモーク**
 
 Run: `uv run --no-sync pytest -q && uv run --no-sync python -c "import sys; sys.path.insert(0,'src'); import snoreguard.app; print('import ok')"`
 Expected: 全 PASS、`import ok`
 
-- [ ] **Step 6: コミット**
+- [x] **Step 6: コミット**
 
 ```bash
 uv run --no-sync ruff check . && uv run --no-sync ruff format .

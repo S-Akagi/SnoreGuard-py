@@ -10,6 +10,10 @@
 
 **Spec:** `docs/superpowers/specs/2026-08-23-windows-refresh-audit.md`（課題 15・16）
 
+## 実行状況（2026-08-23 時点）
+
+**未着手。** Phase 1（Task 9〜12 残）と Phase 2 を完了させてから着手すること。
+
 ## Global Constraints
 
 Phase 1 計画の Global Constraints を適用する。加えて:
