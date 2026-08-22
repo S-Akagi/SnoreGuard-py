@@ -4,7 +4,6 @@ import queue
 import threading
 import time
 import tkinter as tk
-import winsound
 from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
@@ -15,6 +14,7 @@ import numpy as np
 import sounddevice as sd
 
 from core.settings import RuleSettings, TimeSchedulerSettings
+from snoreguard import notify
 from snoreguard.audio_service import AudioService
 from snoreguard.settings_manager import SettingsManager
 from snoreguard.time_scheduler import TimeScheduler
@@ -504,10 +504,10 @@ class SnoreGuardApp:
         logger.info("いびき検出イベント発生")
         self.add_log("いびきを検出しました！", "detection")
         self.status_label_var.set("イビキ検出!")
-        if self.notification_var.get():
-            winsound.Beep(1000, 200)
         if self.auto_mute_var.get():
             self._trigger_vrchat_mute()
+        if self.notification_var.get():
+            notify.beep(1000, 200)
         self.root.after(
             2000, lambda: self.is_running and self.status_label_var.set("🔊 検出中...")
         )
