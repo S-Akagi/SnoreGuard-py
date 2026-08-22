@@ -475,68 +475,28 @@ class CalibrationModal:
         try:
             if not self.original_settings or not self.calibration_result:
                 return
+            from core.settings import format_setting_value
 
-            from dataclasses import fields
-
-            old_settings = self.original_settings
-            new_settings = self.calibration_result.optimal_settings
+            new_settings = self.calibration_result.optimal_settings.sanitized()
             confidence = self.calibration_result.confidence_scores.get(
                 "total_confidence", 0
             )
-
-            # 設定項目の日本語名マッピング
-            field_names = {
-                "energy_threshold": "エネルギー閾値",
-                "f0_confidence_threshold": "F0信頼度閾値",
-                "spectral_centroid_threshold": "スペクトル重心閾値",
-                "zcr_threshold": "ZCR閾値",
-                "min_duration_seconds": "最小持続時間",
-                "max_duration_seconds": "最大持続時間",
-                "f0_min_hz": "F0最小値",
-                "f0_max_hz": "F0最大値",
-                "periodicity_event_count": "周期イベント数",
-                "periodicity_window_seconds": "周期ウィンドウ",
-                "min_event_interval_seconds": "最小イベント間隔",
-                "max_event_interval_seconds": "最大イベント間隔",
-            }
-
-            # 結果テキスト作成
             result_text = f"統計的最適化完了 (信頼度: {confidence:.1%})\n\n"
             result_text += "=== 変更された設定値 ===\n"
-
-            changes_found = False
-
-            for field in fields(old_settings):
-                field_name = field.name
-                old_value = getattr(old_settings, field_name)
-                new_value = getattr(new_settings, field_name)
-
-                # 値が変更された場合のみ表示
-                if abs(old_value - new_value) > 1e-6:  # 浮動小数点数の比較
-                    changes_found = True
-                    display_name = field_names.get(field_name, field_name)
-
-                    # 値の形式を整える
-                    if isinstance(old_value, float):
-                        old_str = f"{old_value:.4f}".rstrip("0").rstrip(".")
-                        new_str = f"{new_value:.4f}".rstrip("0").rstrip(".")
-                    else:
-                        old_str = str(old_value)
-                        new_str = str(new_value)
-
-                    result_text += f"{display_name}:\n  {old_str} → {new_str}\n\n"
-
-            if not changes_found:
+            changes = self.original_settings.diff(new_settings)
+            for _name, label, old, new in changes:
+                result_text += (
+                    f"{label}:\n  {format_setting_value(old)} → "
+                    f"{format_setting_value(new)}\n\n"
+                )
+            if not changes:
                 result_text += "変更された設定項目はありません\n"
-
             result_text += "========================"
 
-            # テキストボックスに結果を表示
             self.result_text.configure(state="normal")
             self.result_text.delete("1.0", "end")
             self.result_text.insert("1.0", result_text)
             self.result_text.configure(state="disabled")
-
         except Exception as e:
             logger.error(f"変更内容表示エラー: {e}", exc_info=True)
 

@@ -13,7 +13,7 @@ import customtkinter as ctk
 import numpy as np
 import sounddevice as sd
 
-from core.settings import RuleSettings, TimeSchedulerSettings
+from core.settings import RuleSettings, TimeSchedulerSettings, format_setting_value
 from snoreguard import notify
 from snoreguard.audio_service import AudioService
 from snoreguard.settings_manager import SettingsManager
@@ -542,17 +542,23 @@ class SnoreGuardApp:
     def _on_rule_setting_change(
         self, name: str, value_str: str, label_var: tk.StringVar, is_int: bool
     ):
-        """ルール設定変更"""
+        """スライダー操作。共有オブジェクトを直接更新し、相互制約を保つ"""
         value = round(float(value_str)) if is_int else float(value_str)
-        label_var.set(f"{value}" if is_int else f"{value:.3f}")
         setattr(self.rule_settings, name, value)
+        sanitized = self.rule_settings.sanitized()
+        if sanitized != self.rule_settings:
+            # 相手側スライダー（f0_max など）を押し上げた場合は UI にも反映
+            self.rule_settings.copy_from(sanitized)
+            self._update_rule_settings_ui()
+        else:
+            label_var.set(format_setting_value(value))
 
     def _update_rule_settings_ui(self):
-        """ルール設定UI更新"""
+        """共有オブジェクトの値をスライダーとラベルへ反映"""
         for name, (var, label_var, _) in self.rule_setting_vars.items():
             value = getattr(self.rule_settings, name)
             var.set(value)
-            label_var.set(f"{value}" if isinstance(value, int) else f"{value:.3f}")
+            label_var.set(format_setting_value(value))
 
     def _populate_mic_list(self):
         """マイクリスト更新"""
@@ -738,14 +744,7 @@ class SnoreGuardApp:
         if self.HAS_OSC:
             self.auto_mute_var.set(self.app_settings.get("auto_mute_on_snore", True))
         if rule_settings_dict := self.app_settings.get("rule_settings"):
-            for key, value in rule_settings_dict.items():
-                try:
-                    if getattr(self.rule_settings, key, None) is not None or hasattr(
-                        self.rule_settings, key
-                    ):
-                        setattr(self.rule_settings, key, value)
-                except (AttributeError, TypeError):
-                    pass
+            self.rule_settings.copy_from(RuleSettings.from_dict(rule_settings_dict))
         self._update_rule_settings_ui()
         self._update_scheduler_settings_ui()
         self._update_control_state()
@@ -765,26 +764,36 @@ class SnoreGuardApp:
             self._send_status_feedback()
         logger.debug("設定保存完了")
 
+    def apply_rule_settings(self, new_settings: RuleSettings, source: str):
+        """ルール設定を置き換える唯一の入口。
+
+        検出エンジンは self.rule_settings への参照を保持しているため、
+        新しいオブジェクトを代入せず copy_from で中身だけ更新する。
+        """
+        sanitized = new_settings.sanitized()
+        changes = self.rule_settings.diff(sanitized)
+        self.rule_settings.copy_from(sanitized)
+        self._update_rule_settings_ui()
+        self.audio_service.reset_processor_periodicity()
+        self._save_app_settings(send_feedback=False)
+        if changes:
+            self.add_log(f"=== {source}による設定変更 ===", "info")
+            for _name, label, old, new in changes:
+                self.add_log(
+                    f"  {label}: {format_setting_value(old)} → {format_setting_value(new)}",
+                    "info",
+                )
+        else:
+            self.add_log(f"{source}: 変更された設定項目はありません", "info")
+
     def reset_settings(self):
         """設定をデフォルト値にリセット"""
+        if not messagebox.askyesno(
+            "設定のリセット", "ルール設定をすべて初期値に戻します。よろしいですか？"
+        ):
+            return
         try:
-            # デフォルト設定を取得
-            default_settings = self._get_default_settings()
-
-            # 設定を更新
-            self.app_settings = default_settings
-            self.rule_settings = RuleSettings()
-            self.time_scheduler_settings = TimeSchedulerSettings()
-
-            # UIを更新
-            self._update_rule_settings_ui()
-            self._update_scheduler_settings_ui()
-
-            # 設定を保存
-            self.settings_manager.save(self.app_settings)
-
-            self.add_log("設定をデフォルト値にリセットしました", "info")
-
+            self.apply_rule_settings(RuleSettings(), source="リセット")
         except Exception as e:
             logger.error(f"設定リセット中にエラー: {e}", exc_info=True)
             self.add_log(f"設定リセットエラー: {e}", "error")
@@ -1141,102 +1150,17 @@ class SnoreGuardApp:
     def _on_calibration_completed(self, calibration_result):
         """キャリブレーション完了時のコールバック"""
         try:
-            # 変更前の設定を保存
-            old_settings = self.rule_settings
-            optimal_settings = calibration_result.optimal_settings
             confidence = calibration_result.confidence_scores.get("total_confidence", 0)
-
-            # 設定を更新
-            self.rule_settings = optimal_settings
-            self.audio_service.rule_settings = optimal_settings
-
-            # UI設定も更新
-            self._apply_settings_to_ui(optimal_settings)
-
-            # 設定を保存
-            self._save_app_settings()
-
-            # 変更内容をログに表示
-            self._log_calibration_changes(old_settings, optimal_settings)
+            self.apply_rule_settings(
+                calibration_result.optimal_settings, source="キャリブレーション"
+            )
             self.add_log(
                 f"キャリブレーション結果を適用しました (信頼度: {confidence:.1%})",
                 "success",
             )
-
         except Exception as e:
             logger.error(f"キャリブレーション結果適用エラー: {e}", exc_info=True)
             self.add_log(f"キャリブレーション結果適用エラー: {e}", "error")
-
-    def _log_calibration_changes(self, old_settings, new_settings):
-        """キャリブレーション変更内容をログに表示"""
-        try:
-            from dataclasses import fields
-
-            self.add_log("=== キャリブレーション結果 ===", "info")
-
-            # 設定項目の日本語名マッピング
-            field_names = {
-                "energy_threshold": "エネルギー閾値",
-                "f0_confidence_threshold": "F0信頼度閾値",
-                "spectral_centroid_threshold": "スペクトル重心閾値",
-                "zcr_threshold": "ZCR閾値",
-                "min_duration_seconds": "最小持続時間",
-                "max_duration_seconds": "最大持続時間",
-                "f0_min_hz": "F0最小値",
-                "f0_max_hz": "F0最大値",
-                "periodicity_event_count": "周期イベント数",
-                "periodicity_window_seconds": "周期ウィンドウ",
-                "min_event_interval_seconds": "最小イベント間隔",
-                "max_event_interval_seconds": "最大イベント間隔",
-            }
-
-            changes_found = False
-
-            for field in fields(old_settings):
-                field_name = field.name
-                old_value = getattr(old_settings, field_name)
-                new_value = getattr(new_settings, field_name)
-
-                # 値が変更された場合のみ表示
-                if abs(old_value - new_value) > 1e-6:  # 浮動小数点数の比較
-                    changes_found = True
-                    display_name = field_names.get(field_name, field_name)
-
-                    # 値の形式を整える
-                    if isinstance(old_value, float):
-                        old_str = f"{old_value:.4f}".rstrip("0").rstrip(".")
-                        new_str = f"{new_value:.4f}".rstrip("0").rstrip(".")
-                    else:
-                        old_str = str(old_value)
-                        new_str = str(new_value)
-
-                    self.add_log(f"  {display_name}: {old_str} → {new_str}", "info")
-
-            if not changes_found:
-                self.add_log("  変更された設定項目はありません", "info")
-
-            self.add_log("========================", "info")
-
-        except Exception as e:
-            logger.error(f"変更内容ログ表示エラー: {e}", exc_info=True)
-
-    def _apply_settings_to_ui(self, settings: RuleSettings):
-        """設定をUIに適用"""
-        try:
-            settings_dict = asdict(settings)
-            for name, value in settings_dict.items():
-                if name in self.rule_setting_vars:
-                    var, label_var, slider = self.rule_setting_vars[name]
-                    var.set(value)
-
-                    # ラベル更新
-                    if isinstance(value, int):
-                        label_var.set(f"{value}")
-                    else:
-                        label_var.set(f"{value:.3f}")
-
-        except Exception as e:
-            logger.error(f"UI設定適用エラー: {e}", exc_info=True)
 
     # ===== VRChat OSC連携機能 =====
 
