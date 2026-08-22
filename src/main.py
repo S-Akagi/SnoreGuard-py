@@ -61,6 +61,7 @@ def main():
     - 失敗時はログに残し、ダイアログで利用者に知らせる
     """
     splash = QuickSplashScreen()
+    install_tk_report_callback(splash.splash_root)
     initialization_complete = False
 
     def end_splash_and_show_main():
@@ -97,7 +98,7 @@ if __name__ == "__main__":
     except SystemExit:
         raise
     except Exception:
-        logger.critical("起動中に致命的なエラー", exc_info=True)
+        # 送出し直した例外は sys.excepthook 側で記録される
         show_fatal_error(
             "SnoreGuard の起動に失敗しました。\n\n"
             f"{traceback.format_exc(limit=3)}\n"

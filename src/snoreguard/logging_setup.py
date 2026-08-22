@@ -79,15 +79,38 @@ def install_tk_report_callback(root) -> None:
     root.report_callback_exception = _report
 
 
+def _live_default_root():
+    """生存している既定の Tk ルートを返す。無ければ None。"""
+    try:
+        import tkinter as tk
+
+        root = getattr(tk, "_default_root", None)
+        if root is not None and root.winfo_exists():
+            return root
+    except Exception:  # noqa: BLE001 - 破棄済みなら新しく作る
+        return None
+    return None
+
+
 def show_fatal_error(message: str) -> None:
-    """起動失敗などをダイアログで知らせる。Tk が使えない場合は黙って戻る。"""
+    """起動失敗などをダイアログで知らせる。Tk が使えない場合は黙って戻る。
+
+    すでに Tk ルートがある（メインウィンドウ生成後の失敗など）場合はそれを
+    親にする。無い場合だけ隠しルートを作り、後で破棄する。
+    """
     try:
         import tkinter as tk
         from tkinter import messagebox
 
-        hidden = tk.Tk()
-        hidden.withdraw()
-        messagebox.showerror("SnoreGuard - 起動エラー", message)
-        hidden.destroy()
+        root = _live_default_root()
+        created = root is None
+        if created:
+            root = tk.Tk()
+            root.withdraw()
+        try:
+            messagebox.showerror("SnoreGuard - 起動エラー", message, parent=root)
+        finally:
+            if created:
+                root.destroy()
     except Exception:  # noqa: BLE001 - ここで失敗しても打つ手がない
         pass
