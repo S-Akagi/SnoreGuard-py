@@ -45,21 +45,18 @@ class CalibrationResult:
 class StageRecorder:
     """段階的録音システム (UI統合版)"""
 
-    def __init__(self, sample_rate: int = 16000):
+    def __init__(self, sample_rate: int = 16000, app_instance=None):
         self.sample_rate = sample_rate
         self.audio_chunk_buffer = []
         self.is_recording = False
+        self.app_instance = app_instance
 
         # UIイベント用のコールバック
         self.progress_callback: Optional[Callable] = None
         self.volume_callback: Optional[Callable] = None
         self.completion_callback: Optional[Callable] = None
 
-        try:
-            self.device_id = self._select_device()
-        except Exception as e:
-            logger.error(f"録音デバイス選択エラー: {e}")
-            self.device_id = None
+        # デバイスIDは録音開始時に動的に取得する
 
     def _audio_callback(self, indata, frames, time, status):
         """リアルタイムで音声データを受け取るコールバック関数"""
@@ -84,8 +81,11 @@ class StageRecorder:
 
     def record_stage_async(self, stage_name: str, duration: float) -> bool:
         """非同期段階的録音実行"""
-        if self.device_id is None:
-            logger.error("録音デバイスが利用できません")
+        try:
+            # 録音開始時に現在選択されているデバイスを動的に取得
+            device_id = self._select_device()
+        except Exception as e:
+            logger.error(f"録音デバイス選択エラー: {e}")
             return False
 
         try:
@@ -95,7 +95,7 @@ class StageRecorder:
             with sd.InputStream(
                 samplerate=self.sample_rate,
                 channels=1,
-                device=self.device_id,
+                device=device_id,
                 callback=self._audio_callback,
             ):
                 start_time = time.time()
@@ -144,25 +144,25 @@ class StageRecorder:
         self.is_recording = False
 
     def _select_device(self) -> int:
-        """デフォルト録音デバイスを選択"""
-        try:
-            default_device_info = sd.query_devices(kind="input")
-            if default_device_info and isinstance(default_device_info, dict):
-                device_id = default_device_info["index"]
-                device_name = default_device_info["name"]
-                logger.info(f"使用デバイス: {device_name} (ID: {device_id})")
-                return int(device_id)
-        except Exception:
-            pass
+        """ダッシュボードの選択デバイスを使用"""
+        # アプリインスタンスが設定されている場合、ダッシュボードの選択デバイスを使用
+        if self.app_instance and hasattr(self.app_instance, 'mic_var') and hasattr(self.app_instance, 'input_devices'):
+            try:
+                selected_mic_name = self.app_instance.mic_var.get()
+                logger.debug(f"現在の選択デバイス名: {selected_mic_name}")
+                logger.debug(f"利用可能デバイス: {list(self.app_instance.input_devices.keys())}")
+                
+                if selected_mic_name and selected_mic_name in self.app_instance.input_devices:
+                    device_id = self.app_instance.input_devices[selected_mic_name]
+                    logger.info(f"ダッシュボード選択デバイスを使用: {selected_mic_name} (ID: {device_id})")
+                    return int(device_id)
+                else:
+                    logger.warning(f"選択されたデバイス '{selected_mic_name}' が利用可能デバイスリストに見つかりません")
+            except Exception as e:
+                logger.warning(f"ダッシュボード選択デバイスの取得に失敗: {e}")
 
-        # フォールバック: 最初の入力デバイスを使用
-        devices = sd.query_devices()
-        for i, device in enumerate(devices):
-            if device["max_input_channels"] > 0:
-                logger.info(f"フォールバック使用デバイス: {device['name']} (ID: {i})")
-                return i
-
-        raise IOError("有効な入力デバイスが見つかりません")
+        # ダッシュボードでデバイスが選択されていない場合はエラー
+        raise IOError("ダッシュボードで入力デバイスを選択してください")
 
 
 class FeatureAnalyzer:
@@ -478,8 +478,8 @@ class StatisticalCalibrator:
 class AutoCalibrator:
     """自動キャリブレーション統合クラス"""
 
-    def __init__(self):
-        self.recorder = StageRecorder()
+    def __init__(self, app_instance=None):
+        self.recorder = StageRecorder(app_instance=app_instance)
         self.analyzer = FeatureAnalyzer()
         self.calibrator = StatisticalCalibrator()
 
