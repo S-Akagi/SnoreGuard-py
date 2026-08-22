@@ -1,4 +1,12 @@
-from core.settings import FIELD_LABELS, SLIDER_RANGES, RuleSettings
+import math
+
+from core.settings import (
+    F0_MIN_GAP_HZ,
+    FIELD_LABELS,
+    SLIDER_RANGES,
+    RuleSettings,
+    format_setting_value,
+)
 
 
 def test_slider_ranges_cover_all_fields():
@@ -65,3 +73,68 @@ def test_diff_lists_changed_fields_only():
     new = RuleSettings(zcr_threshold=0.1)
     d = old.diff(new)
     assert d == [("zcr_threshold", FIELD_LABELS["zcr_threshold"], 0.06, 0.1)]
+
+
+def test_from_dict_rejects_non_finite():
+    default = RuleSettings()
+    for raw in ("nan", "inf", "-inf", float("nan"), float("inf")):
+        s = RuleSettings.from_dict({"energy_threshold": raw})
+        assert s.energy_threshold == default.energy_threshold
+
+
+def test_from_dict_rejects_bool():
+    default = RuleSettings()
+    s = RuleSettings.from_dict(
+        {"periodicity_event_count": True, "energy_threshold": False}
+    )
+    assert s.periodicity_event_count == default.periodicity_event_count
+    assert s.energy_threshold == default.energy_threshold
+
+
+def test_sanitized_replaces_non_finite_with_default():
+    lo, hi, _step = SLIDER_RANGES["energy_threshold"]
+    for bad in (float("nan"), float("inf"), float("-inf")):
+        value = RuleSettings(energy_threshold=bad).sanitized().energy_threshold
+        assert math.isfinite(value)
+        assert lo <= value <= hi
+        assert value == RuleSettings().energy_threshold
+
+
+def test_sanitized_uses_declared_field_types():
+    s = RuleSettings(f0_min_hz=150, f0_max_hz=100).sanitized()
+    assert isinstance(s.f0_min_hz, float)
+    assert isinstance(s.f0_max_hz, float)
+    s2 = RuleSettings(periodicity_event_count=4.7).sanitized()
+    assert isinstance(s2.periodicity_event_count, int)
+    assert s2.periodicity_event_count == 5
+
+
+def test_validate_reports_insufficient_f0_gap():
+    problems = RuleSettings(f0_min_hz=140.0, f0_max_hz=145.0).validate()
+    assert problems
+    assert any("f0" in p for p in problems)
+
+
+def test_valid_settings_are_unchanged_by_sanitized():
+    default = RuleSettings()
+    assert default.validate() == []
+    assert default.sanitized() == default
+
+    custom = RuleSettings(
+        energy_threshold=0.02,
+        f0_min_hz=80.0,
+        f0_max_hz=200.0,
+        periodicity_event_count=5,
+    )
+    assert custom.validate() == []
+    assert custom.sanitized() == custom
+
+
+def test_format_setting_value():
+    assert format_setting_value(100.0) == "100"
+    assert format_setting_value(0.015) == "0.015"
+    assert format_setting_value(4) == "4"
+
+
+def test_f0_min_gap_constant():
+    assert F0_MIN_GAP_HZ == 20.0

@@ -2,6 +2,7 @@
 """検出ルール・スケジューラの設定データクラスと、その検証ユーティリティ。"""
 
 import logging
+import math
 from dataclasses import dataclass, field, fields
 from datetime import datetime
 from typing import Any
@@ -86,9 +87,17 @@ class RuleSettings:
             if f.name not in data:
                 continue
             raw = data[f.name]
+            # bool は int のサブクラスなので数値変換に成功してしまう。数値として扱わない。
+            if isinstance(raw, bool):
+                logger.warning(f"設定 {f.name} の値 {raw!r} が不正なため既定値を使用")
+                continue
             try:
                 value = int(raw) if f.type is int else float(raw)
             except (TypeError, ValueError):
+                logger.warning(f"設定 {f.name} の値 {raw!r} が不正なため既定値を使用")
+                continue
+            # NaN / inf は JSON からも入りうるが、クランプを素通りするので拒否する。
+            if not math.isfinite(value):
                 logger.warning(f"設定 {f.name} の値 {raw!r} が不正なため既定値を使用")
                 continue
             setattr(settings, f.name, value)
@@ -98,15 +107,27 @@ class RuleSettings:
         """スライダー範囲にクランプし、相互制約を満たした新しいインスタンスを返す"""
         s = RuleSettings()
         s.copy_from(self)
-        for name, (lo, hi, _step) in SLIDER_RANGES.items():
-            value = getattr(s, name)
+        for f in fields(RuleSettings):
+            lo, hi, _step = SLIDER_RANGES[f.name]
+            value = getattr(s, f.name)
+            # 数値でない値・NaN・inf はクランプできないので既定値に戻す。
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not math.isfinite(value)
+            ):
+                logger.warning(f"設定 {f.name} の値 {value!r} が不正なため既定値を使用")
+                value = f.default
             clamped = min(max(value, lo), hi)
-            setattr(s, name, int(clamped) if isinstance(value, int) else float(clamped))
+            # 型は宣言（f.type）に合わせる。UI は int/float でスライダー種別を決めるため。
+            setattr(s, f.name, int(round(clamped)) if f.type is int else float(clamped))
 
         if s.f0_min_hz + F0_MIN_GAP_HZ > s.f0_max_hz:
             s.f0_max_hz = min(
                 s.f0_min_hz + F0_MIN_GAP_HZ, SLIDER_RANGES["f0_max_hz"][1]
             )
+            # 防御的: 現在の SLIDER_RANGES では f0_max の上限に余裕があり到達しない。
+            # SLIDER_RANGES を狭めたときのためのフォールバック。
             if s.f0_min_hz + F0_MIN_GAP_HZ > s.f0_max_hz:
                 s.f0_min_hz = max(
                     s.f0_max_hz - F0_MIN_GAP_HZ, SLIDER_RANGES["f0_min_hz"][0]
@@ -115,6 +136,7 @@ class RuleSettings:
             s.max_duration_seconds = s.min_duration_seconds
         if s.min_event_interval_seconds > s.max_event_interval_seconds:
             s.max_event_interval_seconds = s.min_event_interval_seconds
+        # 防御的: 現在の SLIDER_RANGES の下限は 2 なので到達しない（範囲変更時の保険）。
         s.periodicity_event_count = max(1, s.periodicity_event_count)
         return s
 
@@ -125,14 +147,18 @@ class RuleSettings:
             value = getattr(self, name)
             if not (lo <= value <= hi):
                 problems.append(f"{name}={value} が範囲 [{lo}, {hi}] 外")
-        if self.f0_min_hz >= self.f0_max_hz:
+        # sanitized() が強制する間隔と同じ条件で報告する（validate() == [] なら
+        # sanitized() は値を変えない、という関係を保つため）。
+        if self.f0_min_hz + F0_MIN_GAP_HZ > self.f0_max_hz:
             problems.append(
-                f"f0_min_hz({self.f0_min_hz}) >= f0_max_hz({self.f0_max_hz})"
+                f"f0_min_hz({self.f0_min_hz}) と f0_max_hz({self.f0_max_hz}) の間隔が "
+                f"{F0_MIN_GAP_HZ}Hz 未満"
             )
         if self.min_duration_seconds > self.max_duration_seconds:
             problems.append("min_duration_seconds > max_duration_seconds")
         if self.min_event_interval_seconds > self.max_event_interval_seconds:
             problems.append("min_event_interval_seconds > max_event_interval_seconds")
+        # 防御的: 現在の SLIDER_RANGES の下限は 2 なので範囲チェックが先に検出する。
         if self.periodicity_event_count < 1:
             problems.append("periodicity_event_count < 1")
         return problems
