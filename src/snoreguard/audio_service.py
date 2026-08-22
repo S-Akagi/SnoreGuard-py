@@ -230,20 +230,20 @@ class AudioService:
     def _clear_buffers(self):
         """すべてのバッファとキャッシュをクリア"""
         logger.debug("AudioServiceバッファクリア開始")
-        
+
         # 分析バッファをクリア
-        if hasattr(self, 'analysis_buffer') and self.analysis_buffer is not None:
+        if hasattr(self, "analysis_buffer") and self.analysis_buffer is not None:
             self.analysis_buffer.fill(0)
         self._buffer_size = 0
-        
+
         # FFT関連バッファをクリア
-        if hasattr(self, '_spectrum_buffer') and self._spectrum_buffer is not None:
+        if hasattr(self, "_spectrum_buffer") and self._spectrum_buffer is not None:
             self._spectrum_buffer.fill(0)
-        if hasattr(self, '_fft_buffer') and self._fft_buffer is not None:
+        if hasattr(self, "_fft_buffer") and self._fft_buffer is not None:
             self._fft_buffer.fill(0)
-            
+
         # プロセッサのバッファもクリア
-        if hasattr(self, 'processor') and self.processor is not None:
+        if hasattr(self, "processor") and self.processor is not None:
             self.processor.reset_periodicity()
-            
+
         logger.debug("AudioServiceバッファクリア完了")

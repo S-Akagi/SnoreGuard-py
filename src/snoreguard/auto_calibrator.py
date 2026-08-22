@@ -146,18 +146,31 @@ class StageRecorder:
     def _select_device(self) -> int:
         """ダッシュボードの選択デバイスを使用"""
         # アプリインスタンスが設定されている場合、ダッシュボードの選択デバイスを使用
-        if self.app_instance and hasattr(self.app_instance, 'mic_var') and hasattr(self.app_instance, 'input_devices'):
+        if (
+            self.app_instance
+            and hasattr(self.app_instance, "mic_var")
+            and hasattr(self.app_instance, "input_devices")
+        ):
             try:
                 selected_mic_name = self.app_instance.mic_var.get()
                 logger.debug(f"現在の選択デバイス名: {selected_mic_name}")
-                logger.debug(f"利用可能デバイス: {list(self.app_instance.input_devices.keys())}")
-                
-                if selected_mic_name and selected_mic_name in self.app_instance.input_devices:
+                logger.debug(
+                    f"利用可能デバイス: {list(self.app_instance.input_devices.keys())}"
+                )
+
+                if (
+                    selected_mic_name
+                    and selected_mic_name in self.app_instance.input_devices
+                ):
                     device_id = self.app_instance.input_devices[selected_mic_name]
-                    logger.info(f"ダッシュボード選択デバイスを使用: {selected_mic_name} (ID: {device_id})")
+                    logger.info(
+                        f"ダッシュボード選択デバイスを使用: {selected_mic_name} (ID: {device_id})"
+                    )
                     return int(device_id)
                 else:
-                    logger.warning(f"選択されたデバイス '{selected_mic_name}' が利用可能デバイスリストに見つかりません")
+                    logger.warning(
+                        f"選択されたデバイス '{selected_mic_name}' が利用可能デバイスリストに見つかりません"
+                    )
             except Exception as e:
                 logger.warning(f"ダッシュボード選択デバイスの取得に失敗: {e}")
 

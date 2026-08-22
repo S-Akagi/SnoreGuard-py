@@ -846,15 +846,15 @@ class SnoreGuardApp:
         if self.is_running:
             logger.debug("検出処理を停止中")
             self._stop_detection()
-        
+
         # AudioServiceの最終クリーンアップ
-        if hasattr(self, 'audio_service') and self.audio_service is not None:
+        if hasattr(self, "audio_service") and self.audio_service is not None:
             logger.debug("AudioServiceの最終クリーンアップ中")
             self.audio_service._clear_buffers()
-            
+
         # データキューをクリア
         self._clear_data_queue()
-        
+
         if self.HAS_OSC:
             logger.debug("VRCハンドラーを停止中")
             self.vrc_handler.stop()

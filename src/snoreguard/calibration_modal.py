@@ -288,12 +288,13 @@ class CalibrationModal:
             # 入力デバイスのチェック（録音開始時にも再度チェックされる）
             try:
                 self.auto_calibrator.recorder._select_device()
-            except IOError as device_error:
+            except IOError:
                 # デバイス選択エラーの場合、ダイアログ表示
                 from tkinter import messagebox
+
                 messagebox.showerror(
                     "入力デバイス未選択",
-                    "ダッシュボードで入力デバイスを選択してから\n自動調整を開始してください。"
+                    "ダッシュボードで入力デバイスを選択してから\n自動調整を開始してください。",
                 )
                 return
 
