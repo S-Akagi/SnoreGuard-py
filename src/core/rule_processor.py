@@ -13,6 +13,10 @@ from core.settings import RuleSettings, SnoreEvent
 logger = logging.getLogger(__name__)
 
 
+class FeatureExtractionError(RuntimeError):
+    """特徴量抽出に失敗した（このチャンクはスキップする）"""
+
+
 class FeatureExtractor:
     """音声チャンクからRMS、スペクトル重心、ZCR、F0を抽出"""
 
@@ -29,56 +33,14 @@ class FeatureExtractor:
         self.settings = settings
 
     def extract_features(self, audio_chunk: np.ndarray) -> Dict[str, np.ndarray]:
-        """全特徴量を一括抽出"""
-        features = {
-            "rms": self._extract_rms(audio_chunk),
-            "spectral_centroid": self._extract_spectral_centroid(audio_chunk),
-            "zcr": self._extract_zcr(audio_chunk),
-        }
-        features.update(self._extract_f0(audio_chunk))
-        return features
+        """全特徴量を一括抽出。失敗時は FeatureExtractionError。
 
-    def _extract_rms(self, audio_chunk: np.ndarray) -> np.ndarray:
-        """RMSエネルギーを抽出（音量の指標）"""
+        すべての配列は同じフレーム数（1 + len(audio) // hop_length）で返る。
+        旧実装の固定 20 フレームのフォールバックは形状不整合で検出スレッドを
+        落としていたため廃止した。
+        """
         try:
-            return librosa.feature.rms(
-                y=audio_chunk,
-                frame_length=self.frame_length,
-                hop_length=self.hop_length,
-            )[0]
-        except Exception as e:
-            logger.error(f"RMS抽出エラー: {e}")
-            return self._fallback_rms(audio_chunk)  # 手動計算でフォールバック
-
-    def _extract_spectral_centroid(self, audio_chunk: np.ndarray) -> np.ndarray:
-        """スペクトル重心を抽出（音色の指標）"""
-        try:
-            return librosa.feature.spectral_centroid(
-                y=audio_chunk,
-                sr=self.sample_rate,
-                n_fft=self.frame_length,
-                hop_length=self.hop_length,
-            )[0]
-        except Exception as e:
-            logger.error(f"スペクトル重心抽出エラー: {e}")
-            return self._fallback_spectral_centroid()
-
-    def _extract_zcr(self, audio_chunk: np.ndarray) -> np.ndarray:
-        """ゼロ交差率を抽出（有声/無声の指標）"""
-        try:
-            return librosa.feature.zero_crossing_rate(
-                y=audio_chunk,
-                frame_length=self.frame_length,
-                hop_length=self.hop_length,
-            )[0]
-        except Exception as e:
-            logger.error(f"ゼロ交差率抽出エラー: {e}")
-            return self._fallback_zcr()
-
-    def _extract_f0(self, audio_chunk: np.ndarray) -> Dict[str, np.ndarray]:
-        """基本周波数（音の高さ）と有声確率を抽出"""
-        try:
-            f0, voiced_flag, voiced_probs = librosa.pyin(
+            f0, _voiced_flag, voiced_probs = librosa.pyin(
                 y=audio_chunk,
                 fmin=self.settings.f0_min_hz,
                 fmax=self.settings.f0_max_hz,
@@ -86,35 +48,28 @@ class FeatureExtractor:
                 hop_length=self.hop_length,
                 sr=self.sample_rate,
             )
-            return {"f0": np.nan_to_num(f0, nan=0.0), "voiced_probs": voiced_probs}
+            return {
+                "rms": librosa.feature.rms(
+                    y=audio_chunk,
+                    frame_length=self.frame_length,
+                    hop_length=self.hop_length,
+                )[0],
+                "spectral_centroid": librosa.feature.spectral_centroid(
+                    y=audio_chunk,
+                    sr=self.sample_rate,
+                    n_fft=self.frame_length,
+                    hop_length=self.hop_length,
+                )[0],
+                "zcr": librosa.feature.zero_crossing_rate(
+                    y=audio_chunk,
+                    frame_length=self.frame_length,
+                    hop_length=self.hop_length,
+                )[0],
+                "f0": np.nan_to_num(f0, nan=0.0),
+                "voiced_probs": voiced_probs,
+            }
         except Exception as e:
-            logger.error(f"F0抽出エラー: {e}")
-            return self._fallback_f0()
-
-    def _fallback_rms(self, audio_chunk: np.ndarray) -> np.ndarray:
-        """RMSの手動計算（librosa失敗時）"""
-        hop_samples = len(audio_chunk) // 20  # 20フレームに分割
-        rms_values = []
-        for i in range(0, len(audio_chunk), hop_samples):
-            window = audio_chunk[i : i + hop_samples]
-            if len(window) > 0:
-                rms_values.append(np.sqrt(np.mean(window**2)))  # RMS = 二乗平均平方根
-        return np.array(rms_values, dtype=np.float32)
-
-    def _fallback_spectral_centroid(self) -> np.ndarray:
-        """スペクトル重心のフォールバック値"""
-        return np.full(20, self.sample_rate / 4, dtype=np.float32)
-
-    def _fallback_zcr(self) -> np.ndarray:
-        """ゼロ交差率のフォールバック値"""
-        return np.full(20, 0.1, dtype=np.float32)
-
-    def _fallback_f0(self) -> Dict[str, np.ndarray]:
-        """F0のフォールバック値"""
-        return {
-            "f0": np.zeros(20, dtype=np.float32),
-            "voiced_probs": np.zeros(20, dtype=np.float32),
-        }
+            raise FeatureExtractionError(str(e)) from e
 
 
 class MaskProcessor:
@@ -300,12 +255,13 @@ class RuleBasedProcessor:
         logger.debug("周期性イベントキューがリセットされました。")
 
     def process_audio_chunk(self, audio_chunk: np.ndarray) -> Dict[str, Any]:
-        """音声チャンクの処理"""
+        """音声チャンクの処理。特徴量抽出に失敗したチャンクは {} を返してスキップ"""
         filtered_chunk = sosfilt(self.sos_filter, audio_chunk, axis=0)
 
-        # 特徴量抽出
-        features = self.feature_extractor.extract_features(filtered_chunk)
-        if not features:
+        try:
+            features = self.feature_extractor.extract_features(filtered_chunk)
+        except FeatureExtractionError as e:
+            logger.warning(f"特徴量抽出に失敗したためチャンクをスキップ: {e}")
             return {}
 
         # フレーム数制限
