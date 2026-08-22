@@ -65,6 +65,8 @@ logger = logging.getLogger(__name__)
 
 # アプリケーションクラス
 class SnoreGuardApp:
+    RESTART_DELAYS_S = (5, 10, 20, 40, 60)  # 異常終了後の自動再開の待ち時間
+
     def __init__(self, root: ctk.CTk):
         logger.debug("SnoreGuardApp初期化開始")
         ctk.set_appearance_mode("dark")
@@ -81,6 +83,8 @@ class SnoreGuardApp:
         self.sync_timeout_id = None  # ミュート同期タイムアウトID
         self.is_initializing = False  # 初期化中フラグ
         self.initialization_progress = 0  # 初期化進捗
+        self._restart_attempt = 0  # 音声ストリーム異常終了後の再開試行回数
+        self._restart_after_id = None
 
         # 設定マネージャー初期化
         self.settings_manager = SettingsManager(Path(SETTINGS_FILE))
@@ -108,6 +112,7 @@ class SnoreGuardApp:
             self.data_queue,
             self.on_snore_detected_callback,
             self.add_log_threadsafe,
+            on_stream_stopped=self._on_audio_stream_stopped,
         )
 
         # VRChatハンドラー初期化
@@ -293,6 +298,7 @@ class SnoreGuardApp:
 
     def _finalize_detection_start(self, selected_mic_name: str):
         """初期化完了後のUI状態更新とビジュアル開始"""
+        self._restart_attempt = 0
         self.is_running = True
         self.is_initializing = False
         self._update_control_state()
@@ -345,6 +351,47 @@ class SnoreGuardApp:
         for _, _, scale in self.rule_setting_vars.values():
             scale.configure(state="disabled")
 
+    def _on_audio_stream_stopped(self, error: str | None):
+        """音声ワーカー終了通知（ワーカースレッドから呼ばれる）"""
+        ThreadSafeHandler.safe_after(self.root, self._handle_stream_stopped, error)
+
+    def _handle_stream_stopped(self, error: str | None):
+        """音声ワーカー終了の後処理（メインスレッド）"""
+        self.add_log("オーディオストリームを停止しました。", "system")
+        if error is None or not self.is_running:
+            return  # 利用者操作による正常停止
+        # 異常終了: UI を待機状態へ戻し、自動再開を試みる
+        self.is_running = False
+        self._update_control_state()
+        self.status_label_var.set("音声入力エラー")
+        self.add_log(f"音声入力が停止しました: {error}", "error")
+        self._send_status_feedback()
+        if self._restart_attempt < len(self.RESTART_DELAYS_S):
+            delay = self.RESTART_DELAYS_S[self._restart_attempt]
+            self._restart_attempt += 1
+            self.add_log(
+                f"{delay}秒後に再開を試みます ({self._restart_attempt}/{len(self.RESTART_DELAYS_S)})",
+                "warning",
+            )
+            self.status_label_var.set(f"再接続待機中 ({delay}s)")
+            self._restart_after_id = self.root.after(
+                delay * 1000, self._retry_start_detection
+            )
+        else:
+            self.add_log(
+                "自動再開を諦めました。マイクの接続を確認して手動で開始してください。",
+                "error",
+            )
+            notify.beep(600, 500)
+
+    def _retry_start_detection(self):
+        """自動再開（スケジューラ経路と同様に非対話で開始）"""
+        self._restart_after_id = None
+        if self.is_running or self.is_initializing:
+            return
+        self._populate_mic_list()  # デバイス一覧を取り直す（抜き差し対応は Phase 2）
+        self._start_detection()
+
     def _stop_detection(self):
         """音声検出を停止してシステムをリセット"""
         logger.debug("検出停止処理開始")
@@ -355,6 +402,10 @@ class SnoreGuardApp:
             return
 
         # 検出停止
+        if self._restart_after_id:
+            self.root.after_cancel(self._restart_after_id)
+            self._restart_after_id = None
+        self._restart_attempt = 0
         self.is_running = False
         self.audio_service.stop()  # 音声サービス停止
         logger.debug("音声サービス停止")
@@ -479,7 +530,6 @@ class SnoreGuardApp:
         except (AttributeError, NameError):
             pass
         self._update_detailed_status(res)
-
     def _draw_plots(self):
         """プロット更新"""
         self.waveform_line.set_ydata(self.display_buffer)

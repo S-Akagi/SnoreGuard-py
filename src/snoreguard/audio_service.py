@@ -31,12 +31,15 @@ class AudioService:
         data_queue,
         snore_detected_callback: Callable[[], None],
         log_callback: Callable[[str, str], None],
+        on_stream_stopped: Callable[[str | None], None] | None = None,
     ):
         logger.debug("AudioService初期化開始")
         self.rule_settings = rule_settings  # ルール設定
         self.data_queue = data_queue  # データキュー
         self.snore_detected_callback = snore_detected_callback  # いびき検出コールバック
         self.log_callback = log_callback  # ログコールバック
+        self.on_stream_stopped = on_stream_stopped  # ワーカー終了通知
+        self.last_error: str | None = None  # 直近の異常終了メッセージ
 
         self.processor = RuleBasedProcessor(
             self.rule_settings, self.snore_detected_callback
@@ -90,6 +93,7 @@ class AudioService:
             logger.error(f"デバイス検証失敗: {e}")
             raise
 
+        self.last_error = None  # 直近の異常終了メッセージをクリア
         self.is_running = True  # 実行中フラグをセット
         self._clear_buffers()  # バッファをクリア
         logger.debug("検出スレッド作成中")
@@ -120,10 +124,10 @@ class AudioService:
         self.processor.reset_periodicity()
 
     def _detection_loop(self, device_id: int):
-        """音声入力と処理のメインループを開始"""
+        """音声入力と処理のメインループ（ワーカースレッド）"""
         logger.debug(f"検出ループ開始 - device_id: {device_id}")
+        error_message: str | None = None
         try:
-            # オーディオストリームを開始
             with sd.InputStream(
                 samplerate=self.SAMPLE_RATE,
                 device=device_id,
@@ -135,21 +139,22 @@ class AudioService:
                     f"オーディオストリーム開始 - device: {device_id}, SR: {self.SAMPLE_RATE}"
                 )
                 self.log_callback("オーディオストリームを開始しました。", "system")
-
-                # 実行中フラグがTrueの間ループ
                 while self.is_running:
                     self._process_stream_data()
-
         except Exception as e:
             if self.is_running:
+                error_message = str(e)
                 logger.error(f"検出ループでエラー発生: {e}", exc_info=True)
-                self.log_callback(
-                    f"検出ループで致命的なエラーが発生しました: {e}", "error"
-                )
         finally:
             logger.info("検出ループ終了")
-            self.log_callback("オーディオストリームを停止しました。", "system")
-            self.is_running = False  # 実行中フラグをクリア
+            self.is_running = False
+            self.stream = None
+            self.last_error = error_message
+            if self.on_stream_stopped:
+                try:
+                    self.on_stream_stopped(error_message)
+                except Exception as e:  # noqa: BLE001 - 通知失敗でスレッドを落とさない
+                    logger.error(f"停止通知コールバックでエラー: {e}", exc_info=True)
 
     def _process_stream_data(self):
         """ストリームからデータを読み込み、処理キューに追加"""
