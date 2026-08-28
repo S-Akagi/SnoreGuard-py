@@ -21,17 +21,18 @@ class VRChatOSCReceiver:
         self.server = None
         self.is_running = False
         self._server_thread = None
+        self.bind_error: str | None = None
 
-    def start(self):
-        """OSCメッセージの受信を開始"""
+    def start(self) -> bool:
+        """OSC メッセージの受信を開始。bind に失敗したら False（ログ＋bind_error）"""
         logger.debug(f"OSC受信開始要求 - port: {self.port}")
         if self.is_running:
             logger.warning("OSC受信既に実行中")
-            return
+            return True
+        self.bind_error = None
         try:
             dispatcher_obj = dispatcher.Dispatcher()
             dispatcher_obj.map("/avatar/parameters/MuteSelf", self._mute_handler)
-            # SnoreGuard OSC入力ハンドラー
             dispatcher_obj.map(
                 "/avatar/parameters/SnoreGuard/ToggleDetection",
                 self._toggle_detection_handler,
@@ -46,18 +47,23 @@ class VRChatOSCReceiver:
             self.server = osc_server.ThreadingOSCUDPServer(
                 ("127.0.0.1", self.port), dispatcher_obj
             )
-            self._server_thread = threading.Thread(
-                target=self.server.serve_forever, daemon=True
-            )
-            self._server_thread.start()
-            self.is_running = True
-            logger.info(f"OSC受信開始成功 - port: {self.port}")
+        except OSError as e:
+            self.bind_error = f"受信ポート {self.port} を開けません（他のアプリが使用中の可能性）: {e}"
+            logger.error(self.bind_error)
             if self.log_callback:
-                self.log_callback(f"OSC受信: ポート{self.port}で開始", "osc")
-        except Exception as e:
-            logger.error(f"OSC受信開始エラー: {e}", exc_info=True)
-            if self.log_callback:
-                self.log_callback(f"OSC受信エラー: {e}", "error")
+                self.log_callback(self.bind_error, "error")
+            self.server = None
+            return False
+
+        self._server_thread = threading.Thread(
+            target=self.server.serve_forever, daemon=True, name="osc-receiver"
+        )
+        self._server_thread.start()
+        self.is_running = True
+        logger.info(f"OSC受信開始成功 - port: {self.port}")
+        if self.log_callback:
+            self.log_callback(f"OSC受信: ポート{self.port}で開始", "osc")
+        return True
 
     def stop(self):
         """OSCメッセージの受信を停止"""
@@ -68,6 +74,7 @@ class VRChatOSCReceiver:
         self.is_running = False
         if self.server:
             self.server.shutdown()
+            self.server.server_close()
         if self._server_thread and self._server_thread.is_alive():
             self._server_thread.join(timeout=1.0)
             if self._server_thread.is_alive():
@@ -137,13 +144,14 @@ class VRCHandler:
         )
         logger.debug("VRCHandler初期化完了")
 
-    def start(self):
-        """すべてのVRChat連携サービスを開始"""
+    def start(self) -> bool:
+        """すべてのVRChat連携サービスを開始。戻り値は OSC 受信が開始できたか"""
         logger.debug("VRCHandler開始")
         self.osc_service.start()
-        self.osc_receiver.start()
+        receiver_ok = self.osc_receiver.start()
         self.oscquery_finder.start()
-        logger.info("VRCHandler開始完了")
+        logger.info(f"VRCHandler開始完了 (受信: {'OK' if receiver_ok else 'NG'})")
+        return receiver_ok
 
     def stop(self):
         """すべてのVRChat連携サービスを停止"""

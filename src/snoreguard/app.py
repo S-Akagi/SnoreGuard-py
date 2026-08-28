@@ -150,7 +150,9 @@ class SnoreGuardApp:
             self.root.after(1500, self._notify_settings_recovery)
 
         # VRChatハンドラー開始
-        self.vrc_handler.start()
+        self.receiver_ok = self.vrc_handler.start()
+        if not self.receiver_ok:
+            self.root.after(1200, self._warn_receiver_unavailable)
         logger.debug("VRCハンドラー開始")
 
         # 初期状態フィードバック（OSC接続後に実行、遅延を短縮）
@@ -1013,6 +1015,18 @@ class SnoreGuardApp:
         self.is_vrchat_muted = is_muted
         if not is_muted:
             self.muted_by_snoreguard = False
+
+    def _warn_receiver_unavailable(self):
+        """OSC 受信ポートが開けない＝ミュート状態を追跡できないことを明示"""
+        message = self.vrc_handler.osc_receiver.bind_error or "OSC 受信を開始できません"
+        self.add_log(message, "error")
+        self.add_log(
+            "VRChat のミュート状態を受信できないため、自動ミュートは送信されません。"
+            "VRCFaceTracking など 9001 番ポートを使うアプリを終了して再起動してください。",
+            "warning",
+        )
+        self.status_label.configure(fg_color="#E74C3C")
+        self.status_label_var.set("受信ポート 9001 が使用中")
 
     def _check_for_updates_background(self):
         """バックグラウンドでアップデートを確認する"""
