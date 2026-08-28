@@ -336,6 +336,8 @@ class RuleBasedProcessor:
             features = self.feature_extractor.extract_features(filtered_chunk)
         except FeatureExtractionError as e:
             logger.warning(f"特徴量抽出に失敗したためチャンクをスキップ: {e}")
+            # 音声が 1 チャンク分欠落するため、継続中のセグメントは破棄する
+            self.segment_processor.reset()
             return {}
 
         features = self._limit_frame_count(features)

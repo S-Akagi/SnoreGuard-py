@@ -2,7 +2,7 @@ from datetime import datetime, timedelta
 
 import numpy as np
 
-from core.rule_processor import SegmentProcessor
+from core.rule_processor import RuleBasedProcessor, SegmentProcessor
 from core.settings import RuleSettings
 
 SR, HOP = 16000, 200
@@ -72,3 +72,19 @@ def test_reset_drops_open_segment():
         sp.process_segments(_mask(81, [(0, 5)]), _feats(81), T0 + timedelta(seconds=1))
         == []
     )
+
+
+def test_skipped_chunk_drops_open_segment(monkeypatch):
+    """特徴量抽出に失敗して 1 チャンク分の音声が欠落したら持ち越しを捨てる"""
+    import core.rule_processor as rp
+
+    processor = RuleBasedProcessor(RuleSettings(), lambda: None)
+    processor.segment_processor.process_segments(_mask(81, [(0, 81)]), _feats(81), T0)
+    assert processor.segment_processor._open_frames == 81
+
+    def boom(*args, **kwargs):
+        raise ValueError("pyin failed")
+
+    monkeypatch.setattr(rp.librosa, "pyin", boom)
+    assert processor.process_audio_chunk(np.zeros(16000, dtype=np.float32)) == {}
+    assert processor.segment_processor._open_frames == 0
