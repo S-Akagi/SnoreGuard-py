@@ -60,6 +60,12 @@ def main():
     - 初期化完了後にメインアプリケーションウィンドウを表示
     - 失敗時はログに残し、ダイアログで利用者に知らせる
     """
+    from snoreguard.single_instance import acquire
+
+    if not acquire():
+        show_fatal_error("SnoreGuard は既に起動しています。")
+        return 1
+
     splash = QuickSplashScreen()
     install_tk_report_callback(splash.splash_root)
     initialization_complete = False
