@@ -16,10 +16,17 @@ def acquire(name: str = "Local\\SnoreGuard") -> bool:
         return True
     try:
         import ctypes
+        from ctypes import wintypes
 
-        kernel32 = ctypes.windll.kernel32
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.CreateMutexW.restype = wintypes.HANDLE
+        kernel32.CreateMutexW.argtypes = [
+            wintypes.LPCVOID,
+            wintypes.BOOL,
+            wintypes.LPCWSTR,
+        ]
         _handle = kernel32.CreateMutexW(None, False, name)
-        if kernel32.GetLastError() == _ERROR_ALREADY_EXISTS:
+        if ctypes.get_last_error() == _ERROR_ALREADY_EXISTS:
             logger.warning("SnoreGuard は既に起動しています")
             return False
         return True

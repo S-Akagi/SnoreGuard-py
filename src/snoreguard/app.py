@@ -986,6 +986,9 @@ class SnoreGuardApp:
         """OSC接続状態UI更新"""
         if self.is_running:
             return
+        if not getattr(self, "receiver_ok", True):
+            # 受信ポートが開けていない間は警告表示を優先する（送信側は独立して成功するため）
+            return
         if is_connected:
             color = "#2ECC71"  # 緑色
             text = "VRChat 接続中"
