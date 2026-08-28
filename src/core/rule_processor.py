@@ -6,7 +6,7 @@ from typing import Any, Dict, Tuple
 
 import librosa
 import numpy as np
-from scipy.signal import butter, sosfilt
+from scipy.signal import butter, sosfilt, sosfilt_zi
 
 from core.settings import RuleSettings, SnoreEvent
 
@@ -146,70 +146,120 @@ class MaskProcessor:
 
 
 class SegmentProcessor:
-    """セグメント処理クラス"""
+    """final_mask の連続 True 区間をいびき候補イベントにする。
+
+    1 秒チャンクごとに呼ばれるが、チャンク末尾まで True の区間は「開いたまま」
+    次のチャンクへ持ち越す。これにより max_duration（長すぎる連続音の棄却）が
+    本来の意味で機能し、境界で分断された 1 回のいびきも 1 イベントになる。
+    """
 
     def __init__(self, hop_length: int, sample_rate: int, settings: RuleSettings):
         self.hop_length = hop_length
         self.sample_rate = sample_rate
         self.settings = settings
-        self.candidate_frames_info = []
+        self.frame_seconds = hop_length / sample_rate
+        self.reset()
+
+    def reset(self):
+        """持ち越し中のセグメントを破棄"""
+        self._open_frames = 0
+        self._open_start: datetime | None = None
+        self._open_rms: list[float] = []
+        self._open_f0: list[float] = []
+        self._open_too_long = False
 
     def process_segments(
-        self, final_mask: np.ndarray, features: Dict[str, np.ndarray]
+        self,
+        final_mask: np.ndarray,
+        features: Dict[str, np.ndarray],
+        chunk_start: datetime,
     ) -> list:
-        """セグメントを処理してイベント候補を抽出"""
-        mask_changes = np.diff(
-            np.concatenate(([False], final_mask, [False])).astype(int)
-        )
-        starts = np.where(mask_changes == 1)[0]
-        ends = np.where(mask_changes == -1)[0]
-
+        """チャンク内のマスクを走査し、閉じたセグメントからイベントを作る"""
         events = []
-        for start, end in zip(starts, ends):
-            if end > start:
-                segment_data = [
-                    {"rms": features["rms"][i], "f0": features["f0"][i]}
-                    for i in range(start, end)
-                ]
-                event = self._create_event_from_segment(segment_data)
-                if event:
-                    events.append(event)
+        n = len(final_mask)
+        i = 0
+
+        if self._open_frames > 0:
+            # 前チャンクから継続中のセグメント
+            j = 0
+            while j < n and final_mask[j]:
+                j += 1
+            self._extend_open(features, 0, j)
+            if j >= n:
+                return events  # まだ閉じていない
+            event = self._close_open()
+            if event:
+                events.append(event)
+            i = j
+
+        while i < n:
+            if not final_mask[i]:
+                i += 1
+                continue
+            j = i
+            while j < n and final_mask[j]:
+                j += 1
+            self._open_start = chunk_start + timedelta(seconds=i * self.frame_seconds)
+            self._extend_open(features, i, j)
+            if j >= n:
+                break  # チャンク末尾まで True → 持ち越し
+            event = self._close_open()
+            if event:
+                events.append(event)
+            i = j
 
         return events
 
-    def _create_event_from_segment(self, segment_data: list) -> SnoreEvent | None:
-        """セグメントデータからイベントを作成"""
-        if not segment_data:
+    def _extend_open(self, features: Dict[str, np.ndarray], start: int, end: int):
+        """開いているセグメントにフレーム [start, end) を追加"""
+        count = end - start
+        if count <= 0:
+            return
+        self._open_frames += count
+        if self._open_frames * self.frame_seconds > self.settings.max_duration_seconds:
+            # 長すぎる連続音: 以降の統計は捨て、閉じたときに棄却する
+            self._open_too_long = True
+            self._open_rms.clear()
+            self._open_f0.clear()
+            return
+        self._open_rms.extend(float(v) for v in features["rms"][start:end])
+        self._open_f0.extend(float(v) for v in features["f0"][start:end])
+
+    def _close_open(self) -> SnoreEvent | None:
+        """開いているセグメントを閉じ、持続時間が範囲内ならイベントを返す"""
+        duration = self._open_frames * self.frame_seconds
+        start = self._open_start
+        rms_values = np.array(self._open_rms, dtype=np.float32)
+        f0_values = np.array(self._open_f0, dtype=np.float32)
+        too_long = self._open_too_long
+        self.reset()
+
+        if too_long or start is None:
             return None
-
-        event_duration = len(segment_data) * self.hop_length / self.sample_rate
-
         if not (
             self.settings.min_duration_seconds
-            <= event_duration
+            <= duration
             <= self.settings.max_duration_seconds
         ):
             return None
-
-        rms_values = np.array([data["rms"] for data in segment_data], dtype=np.float32)
-        f0_values = np.array([data["f0"] for data in segment_data], dtype=np.float32)
-
-        avg_energy = float(np.mean(rms_values))
-        valid_f0s = f0_values[f0_values > 0]
-        avg_f0 = float(np.mean(valid_f0s)) if len(valid_f0s) > 0 else 0.0
-
+        valid_f0 = f0_values[f0_values > 0]
         return SnoreEvent(
-            timestamp=datetime.now(),
-            duration=event_duration,
-            f0=avg_f0,
-            energy=avg_energy,
+            timestamp=start,
+            duration=duration,
+            f0=float(np.mean(valid_f0)) if len(valid_f0) else 0.0,
+            energy=float(np.mean(rms_values)) if len(rms_values) else 0.0,
         )
 
 
 class RuleBasedProcessor:
     """ルールベースのイベント検知クラス"""
 
-    def __init__(self, settings: RuleSettings, callback: Callable[[], None]):
+    def __init__(
+        self,
+        settings: RuleSettings,
+        callback: Callable[[], None],
+        clock: Callable[[], datetime] = datetime.now,
+    ):
         self.settings = settings
         self.on_snore_detected = callback
 
@@ -226,6 +276,9 @@ class RuleBasedProcessor:
         self.sos_filter = butter(
             N=5, Wn=[80, 1600], btype="bandpass", fs=self.sample_rate, output="sos"
         )
+        self.clock = clock
+        # 帯域通過フィルタの内部状態 (n_sections, 2)
+        self._zi = sosfilt_zi(self.sos_filter) * 0.0
 
         # コンポーネント初期化
         self.feature_extractor = FeatureExtractor(
@@ -250,13 +303,22 @@ class RuleBasedProcessor:
             logger.error(f"librosaプリコンパイル中にエラー: {e}")
 
     def reset_periodicity(self):
-        """周期性イベントキューのリセット"""
+        """周期性イベントキュー・持ち越しセグメント・フィルタ状態をリセット"""
         self.recent_events.clear()
+        self.segment_processor.reset()
+        self._zi[...] = 0.0
         logger.debug("周期性イベントキューがリセットされました。")
 
-    def process_audio_chunk(self, audio_chunk: np.ndarray) -> Dict[str, Any]:
+    def process_audio_chunk(
+        self, audio_chunk: np.ndarray, chunk_start: datetime | None = None
+    ) -> Dict[str, Any]:
         """音声チャンクの処理。特徴量抽出に失敗したチャンクは {} を返してスキップ"""
-        filtered_chunk = sosfilt(self.sos_filter, audio_chunk, axis=0)
+        if chunk_start is None:
+            chunk_start = self.clock() - timedelta(
+                seconds=len(audio_chunk) / self.sample_rate
+            )
+
+        filtered_chunk, self._zi = sosfilt(self.sos_filter, audio_chunk, zi=self._zi)
 
         try:
             features = self.feature_extractor.extract_features(filtered_chunk)
@@ -264,30 +326,40 @@ class RuleBasedProcessor:
             logger.warning(f"特徴量抽出に失敗したためチャンクをスキップ: {e}")
             return {}
 
-        # フレーム数制限
         features = self._limit_frame_count(features)
-
-        # マスク作成
         pass_masks, final_mask = self.mask_processor.create_masks(features)
 
-        # セグメント処理
-        events = self.segment_processor.process_segments(final_mask, features)
+        events = self.segment_processor.process_segments(
+            final_mask, features, chunk_start
+        )
         for event in events:
-            self.recent_events.append(event)
-            self._check_periodicity()
-
-        # 統計計算
-        self._calculate_detailed_stats(features, pass_masks)
+            self.register_event(event)
 
         return {
             "analysis_results": features,
-            "pass_masks": pass_masks,
+            "pass_masks": {k: v.copy() for k, v in pass_masks.items()},
             "final_mask_frames": final_mask,
             "recent_events_count": len(self.recent_events),
             "first_event_timestamp": self.recent_events[0].timestamp
             if self.recent_events
             else None,
         }
+
+    def register_event(self, event: SnoreEvent) -> None:
+        """イベントを周期列に登録し、間隔条件と周期性条件を評価する"""
+        s = self.settings
+        if self.recent_events:
+            gap = (event.timestamp - self.recent_events[-1].timestamp).total_seconds()
+            if gap < s.min_event_interval_seconds:
+                logger.debug(
+                    f"イベント間隔 {gap:.2f}s が短すぎるため同一イベントとして無視"
+                )
+                return
+            if gap > s.max_event_interval_seconds:
+                logger.debug(f"イベント間隔 {gap:.2f}s が長すぎるため周期列をリセット")
+                self.recent_events.clear()
+        self.recent_events.append(event)
+        self._check_periodicity(event.timestamp)
 
     def _limit_frame_count(
         self, features: Dict[str, np.ndarray]
@@ -302,67 +374,14 @@ class RuleBasedProcessor:
                 features[key] = features[key][: self.max_frames]
         return features
 
-    def _check_periodicity(self):
-        """周期性のチェック"""
-        now = datetime.now()
-        window_start_time = now - timedelta(
-            seconds=self.settings.periodicity_window_seconds
-        )
-
-        # 古いイベントを削除
-        while (
-            self.recent_events and self.recent_events[0].timestamp < window_start_time
-        ):
+    def _check_periodicity(self, now: datetime):
+        """周期ウィンドウ内のイベント数が閾値に達したら検出コールバックを呼ぶ"""
+        window_start = now - timedelta(seconds=self.settings.periodicity_window_seconds)
+        while self.recent_events and self.recent_events[0].timestamp < window_start:
             self.recent_events.popleft()
-
-        # 周期性チェック
         if len(self.recent_events) >= self.settings.periodicity_event_count:
             logger.info(
                 f"いびき検知成功！周期ウィンドウ内に{len(self.recent_events)}回のイベントを検出"
             )
             self.on_snore_detected()
             self.recent_events.clear()
-
-    def _calculate_detailed_stats(
-        self, features: Dict[str, np.ndarray], pass_masks: Dict[str, np.ndarray]
-    ) -> Dict[str, float]:
-        """詳細な統計を計算"""
-        stats = {}
-
-        # 特徴量の統計
-        for key, values in features.items():
-            if values is not None and len(values) > 0:
-                try:
-                    valid_values = (
-                        values[~np.isnan(values)]
-                        if hasattr(values, "dtype")
-                        and np.issubdtype(values.dtype, np.floating)
-                        else values
-                    )
-                    if len(valid_values) > 0:
-                        stats[f"{key}_avg"] = float(np.mean(valid_values))
-                        stats[f"{key}_max"] = float(np.max(valid_values))
-                        stats[f"{key}_min"] = float(np.min(valid_values))
-                    else:
-                        stats[f"{key}_avg"] = stats[f"{key}_max"] = stats[
-                            f"{key}_min"
-                        ] = 0.0
-                except Exception as e:
-                    logger.error(f"統計計算エラー ({key}): {e}")
-                    stats[f"{key}_avg"] = stats[f"{key}_max"] = stats[f"{key}_min"] = (
-                        0.0
-                    )
-
-        # マスクの統計
-        for key, mask in pass_masks.items():
-            try:
-                stats[f"{key}_pass_rate"] = (
-                    float(np.mean(mask.astype(float)))
-                    if mask is not None and len(mask) > 0
-                    else 0.0
-                )
-            except Exception as e:
-                logger.error(f"マスク統計計算エラー ({key}): {e}")
-                stats[f"{key}_pass_rate"] = 0.0
-
-        return stats
