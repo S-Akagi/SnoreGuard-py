@@ -685,6 +685,14 @@ git commit -m "fix: 無人経路（スケジューラ/OSC）の開始失敗は�
 
 ### Task 15: VRChat 接続状態を実測で表示し、検出状態ラベルと分離する
 
+**Phase 1 Task 9 からの持ち越し:** 受信ポート bind 失敗時の赤ラベル（`_warn_receiver_unavailable`）は
+`_update_osc_status_ui` からの上書きこそ防いだが、検出ライフサイクル側の `status_label_var.set`
+（「検出中」「音声入力エラー」「システム待機中」「イビキ検出!」）には依然として消される。本タスクで
+VRChat 接続状態を独立した `vrc_status_var` インジケータに分離すれば構造的に解消するので、
+分離後は `_warn_receiver_unavailable` から `status_label` / `status_label_var` の操作を削除し、
+`receiver_down` 状態は `_poll_vrc_status` の表示に一本化すること（`_update_osc_status_ui` の
+`receiver_ok` 早期 return も同時に不要になる）。
+
 **Phase 1 Task 8 からの持ち越し（Minor）:** `_check_silence` は無音検知時に
 `status_label_var` を「⚠ 無音が続いています」にするが、音声が戻っても復帰ログを出すだけで
 文言を戻さない。本タスクで `_set_detection_status` を導入する際、復帰分岐（`_silence_warned`
