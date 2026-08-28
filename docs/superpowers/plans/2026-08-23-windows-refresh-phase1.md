@@ -10,10 +10,11 @@
 
 **Spec:** `docs/superpowers/specs/2026-08-23-windows-refresh-audit.md`
 
-## 実行状況（2026-08-23 時点・中断）
+## 実行状況（2026-08-29 時点・Phase 1 完了）
 
-**Task 1〜8 完了。Task 9〜12 未着手。** ブランチ `feature/windows-refresh`、HEAD `d3ec881`。
-全 43 テスト green、`ruff check` / `ruff format --check` クリーン、作業ツリーもクリーン。
+**Task 1〜12 すべて完了。** ブランチ `feature/windows-refresh`。
+全 66 テスト green、`ruff check` / `ruff format --check` クリーン、`uv lock --check` OK、
+import スモーク・GUI 起動スモーク（macOS）ともに成功。
 
 | Task | 状態 | コミット |
 |---|---|---|
@@ -24,16 +25,18 @@
 | 5. `RuleSettings` の検証・クランプ・コピー | ✅ 修正1回で合格 | `9c51360`, `e44b19e` |
 | 6. 参照ズレの修正と相互制約の UI 適用 | ✅ 修正1回で合格 | `8c6492f`, `d52e511` |
 | 7. 特徴量フォールバックの廃止 | ✅ レビュー合格 | `a15a389` |
-| 8. ストリーム停止の伝播・自動再開・無音監視 | ✅ レビュー合格（下記 2 点を Phase 2 に持ち越し） | `c8d8aab`, `d3ec881` |
-| 9. ミュート判断ポリシー・受信ポート・単一起動 | ⬜ 未着手 | — |
-| 10. チャンク跨ぎセグメント・間隔検証・フィルタ状態 | ⬜ 未着手 | — |
-| 11. pyin の広帯域化 | ⬜ 未着手 | — |
-| 12. Phase 1 の仕上げ | ⬜ 未着手 | — |
+| 8. ストリーム停止の伝播・自動再開・無音監視 | ✅ レビュー合格（2 件を Phase 2 Task 14 へ） | `c8d8aab`, `d3ec881` |
+| 9. ミュート判断ポリシー・受信ポート・単一起動 | ✅ 修正1回で合格（1 件を Phase 2 Task 15 へ） | `99d01be`, `6a9ebe3`, `8b6a808`, `0870cc5` |
+| 10. チャンク跨ぎセグメント・間隔検証・フィルタ状態 | ✅ レビュー合格 | `e2854a6`, `0d161b2`, `a838a13` |
+| 11. pyin の広帯域化（＋スキップ時のセグメント破棄） | ✅ レビュー合格 | `46f85df`, `e421647` |
+| 12. Phase 1 の仕上げ（検証・スモーク） | ✅ 完了 | — |
 
-**再開方法:** `docs/superpowers/plans/2026-08-23-windows-refresh-phase1.md` の Task 9 から
-superpowers:subagent-driven-development で続行する。台帳は
-`.superpowers/sdd/2026-08-23-windows-refresh-phase1/progress.md`（git 管理外）にあり、
-各タスクのブリーフ・実装レポート・レビュー差分も同じディレクトリに残っている。
+**GUI 起動スモークで確認できたこと（macOS, 2026-08-29）:** `winsound` スタブ無しで起動、
+`~/.snoreguard/logs/snoreguard.log` にファイルログ出力、`VRCHandler開始完了 (受信: OK)`、
+設定読み込み成功、ダッシュボード描画正常（v1.4.0-beta.3）。
+なお「VRChat 接続中」の緑表示は送信クライアント生成だけで点灯する既知の問題で、Phase 2 Task 15 が実測表示に置き換える。
+
+**次のステップ:** `docs/superpowers/plans/2026-08-23-windows-refresh-phase2.md` を Task 13 から実行する。
 
 ### Task 8 から Phase 2 への持ち越し（レビュー指摘・要対応）
 
@@ -1793,7 +1796,7 @@ git commit -m "feat: 60秒以上の無音を検知して警告する無音ウォ
   - `VRCHandler.start() -> bool`（受信開始に成功したか）
   - `single_instance.acquire(name: str = "Local\\SnoreGuard") -> bool`（Windows 以外は常に True）
 
-- [ ] **Step 1: 失敗するテストを書く**
+- [x] **Step 1: 失敗するテストを書く**
 
 `tests/test_mute_policy.py`:
 
@@ -1847,12 +1850,12 @@ def test_start_returns_false_when_port_in_use():
         assert receiver.is_running is False
 ```
 
-- [ ] **Step 2: 失敗を確認**
+- [x] **Step 2: 失敗を確認**
 
 Run: `uv run --no-sync pytest tests/test_mute_policy.py tests/test_osc_receiver.py -q`
 Expected: ImportError / AssertionError（`start()` が None を返す）
 
-- [ ] **Step 3: 実装**
+- [x] **Step 3: 実装**
 
 `src/snoreguard/mute_policy.py`:
 
@@ -2050,12 +2053,12 @@ def acquire(name: str = "Local\\SnoreGuard") -> bool:
         return 1
 ```
 
-- [ ] **Step 4: テストと import スモーク**
+- [x] **Step 4: テストと import スモーク**
 
 Run: `uv run --no-sync pytest -q && uv run --no-sync python -c "import sys; sys.path.insert(0,'src'); import main; print('import ok')"`
 Expected: 全 PASS、`import ok`。`grep -n "is_awaiting_mute_sync\|sync_timeout_id" src/snoreguard/app.py` が空であること。
 
-- [ ] **Step 5: コミット（3 つ）**
+- [x] **Step 5: コミット（3 つ）**
 
 ```bash
 uv run --no-sync ruff check . && uv run --no-sync ruff format .
@@ -2084,7 +2087,7 @@ git commit -m "feat: 名前付きミューテックスで多重起動を防止"
   - `RuleBasedProcessor.process_audio_chunk(audio_chunk, chunk_start: datetime | None = None)`
   - `RuleBasedProcessor.register_event(event: SnoreEvent) -> None`（間隔検証＋周期性判定。テスト用に公開）
 
-- [ ] **Step 1: 失敗するテストを書く**
+- [x] **Step 1: 失敗するテストを書く**
 
 `tests/test_segment_processor.py`:
 
@@ -2247,12 +2250,12 @@ def test_reset_clears_filter_state():
     assert not np.any(proc._zi)
 ```
 
-- [ ] **Step 2: 失敗を確認**
+- [x] **Step 2: 失敗を確認**
 
 Run: `uv run --no-sync pytest tests/test_segment_processor.py tests/test_periodicity.py tests/test_bandpass_state.py -q`
 Expected: TypeError（`process_segments` の引数数、`clock` 引数、`register_event` なし）
 
-- [ ] **Step 3: `SegmentProcessor` を実装**
+- [x] **Step 3: `SegmentProcessor` を実装**
 
 `src/core/rule_processor.py` の `SegmentProcessor` クラス全体を以下に置き換える:
 
@@ -2358,7 +2361,7 @@ class SegmentProcessor:
         )
 ```
 
-- [ ] **Step 4: `RuleBasedProcessor` を実装**
+- [x] **Step 4: `RuleBasedProcessor` を実装**
 
 import に `from scipy.signal import butter, sosfilt, sosfilt_zi` を使う。`__init__` のシグネチャを `def __init__(self, settings: RuleSettings, callback: Callable[[], None], clock: Callable[[], datetime] = datetime.now):` にし、`self.sos_filter = butter(...)` の**直後**（`self.feature_extractor = ...` より前）に追加:
 
@@ -2444,12 +2447,12 @@ import に `from scipy.signal import butter, sosfilt, sosfilt_zi` を使う。`_
 
 `_calculate_detailed_stats` メソッドは戻り値が捨てられていたので削除する（呼び出しも削除済み）。
 
-- [ ] **Step 5: テスト（全体）**
+- [x] **Step 5: テスト（全体）**
 
 Run: `uv run --no-sync pytest -q`
 Expected: 全 PASS（`test_process_audio_chunk_returns_81_frames_for_one_second` を含む）
 
-- [ ] **Step 6: コミット（3 つ）**
+- [x] **Step 6: コミット（3 つ）**
 
 ```bash
 uv run --no-sync ruff check . && uv run --no-sync ruff format .
@@ -2475,7 +2478,7 @@ git commit -m "fix: 帯域通過フィルタの状態をチャンク間で引き
 **Interfaces:**
 - Produces（`core.constants`）: `SAMPLE_RATE = 16000`, `FRAME_LENGTH = 800`, `HOP_LENGTH = 200`, `PYIN_FMIN_HZ = 50.0`, `PYIN_FMAX_HZ = 450.0`, `BANDPASS_HZ = (80, 1600)`, `ANALYSIS_CHUNK_SECONDS = 1.0`
 
-- [ ] **Step 1: 失敗するテストを書く**
+- [x] **Step 1: 失敗するテストを書く**
 
 `tests/test_f0_range.py`:
 
@@ -2512,12 +2515,12 @@ def test_low_pitch_is_inside_range():
     assert res["pass_masks"]["f0_range"].mean() > 0.8
 ```
 
-- [ ] **Step 2: 失敗を確認**
+- [x] **Step 2: 失敗を確認**
 
 Run: `uv run --no-sync pytest tests/test_f0_range.py -q`
 Expected: `test_high_pitch_is_measured_outside_snore_range` が FAIL（f0 が 150 以下に折り返す）
 
-- [ ] **Step 3: 実装**
+- [x] **Step 3: 実装**
 
 `src/core/constants.py`:
 
@@ -2575,12 +2578,12 @@ def test_process_audio_chunk_skips_chunk_instead_of_crashing(monkeypatch):
     assert processor.process_audio_chunk(np.zeros(16000, dtype=np.float32)) == {}
 ```
 
-- [ ] **Step 4: テスト**
+- [x] **Step 4: テスト**
 
 Run: `uv run --no-sync pytest -q`
 Expected: 全 PASS
 
-- [ ] **Step 5: コミット**
+- [x] **Step 5: コミット**
 
 ```bash
 uv run --no-sync ruff check . && uv run --no-sync ruff format .
@@ -2595,21 +2598,21 @@ git commit -m "fix: pyin を 50-450Hz の広帯域で実行し、F0 範囲は後
 **Files:**
 - Modify: `docs/superpowers/plans/2026-08-23-windows-refresh-phase1.md`（チェックボックス）
 
-- [ ] **Step 1: 全テストと lint**
+- [x] **Step 1: 全テストと lint**
 
 Run: `uv run --no-sync ruff check . && uv run --no-sync ruff format --check . && uv run --no-sync pytest -q`
 Expected: すべて成功。
 
-- [ ] **Step 2: import スモーク**
+- [x] **Step 2: import スモーク**
 
 Run: `uv run --no-sync python -c "import sys; sys.path.insert(0,'src'); import main, snoreguard.app, snoreguard.ui, snoreguard.calibration_modal; print('import ok')"`
 Expected: `import ok`
 
-- [ ] **Step 3: GUI スモーク（macOS の場合）**
+- [x] **Step 3: GUI スモーク（macOS の場合）**
 
 `TCL_LIBRARY`/`TK_LIBRARY` を uv の Python 3.11.13 の `lib/tcl8.6`・`lib/tk8.6` に設定して `uv run --no-sync python src/main.py` を起動し、ダッシュボードが表示され、ログに「受信ポート」「設定ファイル」系のエラーが出ないことを目視で確認してから終了する。確認できない環境ではスキップしてよい（その旨を報告する）。
 
-- [ ] **Step 4: コミット**
+- [x] **Step 4: コミット**
 
 ```bash
 git add docs/superpowers/plans/2026-08-23-windows-refresh-phase1.md
