@@ -8,6 +8,14 @@ import librosa
 import numpy as np
 from scipy.signal import butter, sosfilt, sosfilt_zi
 
+from core.constants import (
+    BANDPASS_HZ,
+    FRAME_LENGTH,
+    HOP_LENGTH,
+    PYIN_FMAX_HZ,
+    PYIN_FMIN_HZ,
+    SAMPLE_RATE,
+)
 from core.settings import RuleSettings, SnoreEvent
 
 logger = logging.getLogger(__name__)
@@ -42,8 +50,8 @@ class FeatureExtractor:
         try:
             f0, _voiced_flag, voiced_probs = librosa.pyin(
                 y=audio_chunk,
-                fmin=self.settings.f0_min_hz,
-                fmax=self.settings.f0_max_hz,
+                fmin=PYIN_FMIN_HZ,
+                fmax=PYIN_FMAX_HZ,
                 frame_length=self.frame_length,
                 hop_length=self.hop_length,
                 sr=self.sample_rate,
@@ -264,9 +272,9 @@ class RuleBasedProcessor:
         self.on_snore_detected = callback
 
         # 音声処理パラメータ
-        self.sample_rate = 16000
-        self.frame_length = 800
-        self.hop_length = 200
+        self.sample_rate = SAMPLE_RATE
+        self.frame_length = FRAME_LENGTH
+        self.hop_length = HOP_LENGTH
         self.max_frames = int(self.sample_rate * 5.0 / self.hop_length)
 
         # イベント管理
@@ -274,7 +282,11 @@ class RuleBasedProcessor:
 
         # フィルター
         self.sos_filter = butter(
-            N=5, Wn=[80, 1600], btype="bandpass", fs=self.sample_rate, output="sos"
+            N=5,
+            Wn=list(BANDPASS_HZ),
+            btype="bandpass",
+            fs=self.sample_rate,
+            output="sos",
         )
         self.clock = clock
         # 帯域通過フィルタの内部状態 (n_sections, 2)

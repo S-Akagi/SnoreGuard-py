@@ -9,18 +9,28 @@ from core.rule_processor import (
 from core.settings import RuleSettings
 
 
-def test_feature_extractor_raises_on_invalid_f0_range():
-    fe = FeatureExtractor(16000, 800, 200, RuleSettings(f0_min_hz=150, f0_max_hz=100))
+def test_feature_extractor_wraps_errors(monkeypatch):
+    import core.rule_processor as rp
+
+    def boom(*args, **kwargs):
+        raise ValueError("pyin failed")
+
+    monkeypatch.setattr(rp.librosa, "pyin", boom)
+    fe = FeatureExtractor(16000, 800, 200, RuleSettings())
     with pytest.raises(FeatureExtractionError):
         fe.extract_features(np.zeros(16000, dtype=np.float32))
 
 
-def test_process_audio_chunk_skips_chunk_instead_of_crashing():
-    # sanitized を通さない生の不正値（JSON 手編集などを想定）
-    settings = RuleSettings(f0_min_hz=150, f0_max_hz=100)
-    processor = RuleBasedProcessor(settings, lambda: None)
-    result = processor.process_audio_chunk(np.zeros(16000, dtype=np.float32))
-    assert result == {}
+def test_process_audio_chunk_skips_chunk_instead_of_crashing(monkeypatch):
+    import core.rule_processor as rp
+
+    processor = RuleBasedProcessor(RuleSettings(), lambda: None)
+
+    def boom(*args, **kwargs):
+        raise ValueError("pyin failed")
+
+    monkeypatch.setattr(rp.librosa, "pyin", boom)
+    assert processor.process_audio_chunk(np.zeros(16000, dtype=np.float32)) == {}
 
 
 def test_process_audio_chunk_returns_81_frames_for_one_second():
