@@ -16,6 +16,7 @@ import sounddevice as sd
 from core.settings import RuleSettings, TimeSchedulerSettings, format_setting_value
 from snoreguard import notify
 from snoreguard.audio_service import AudioService
+from snoreguard.mute_policy import MuteAction, decide_mute_action
 from snoreguard.settings_manager import SettingsManager
 from snoreguard.time_scheduler import TimeScheduler
 from snoreguard.vrc.handler import VRCHandler
@@ -80,8 +81,7 @@ class SnoreGuardApp:
         self.input_devices = {}  # 入力デバイス
         self.periodicity_timer_start_time = None  # 周期タイマー開始時間
         self.is_vrchat_muted = None  # VRChatミュート状態
-        self.is_awaiting_mute_sync = False  # ミュート同期待機フラグ
-        self.sync_timeout_id = None  # ミュート同期タイムアウトID
+        self.muted_by_snoreguard = False  # SnoreGuard がミュートしたか
         self.is_initializing = False  # 初期化中フラグ
         self.initialization_progress = 0  # 初期化進捗
         self._restart_attempt = 0  # 音声ストリーム異常終了後の再開試行回数
@@ -600,27 +600,23 @@ class SnoreGuardApp:
         )
 
     def _trigger_vrchat_mute(self):
-        """VRChatミュート処理"""
-        logger.debug(f"VRChatミュート処理開始: 現在状態={self.is_vrchat_muted}")
-        if self.is_vrchat_muted is False:
+        """VRChatミュート処理。状態不明なら送らない（盲目トグルはミュート解除になり得る）"""
+        action = decide_mute_action(self.is_vrchat_muted)
+        logger.debug(
+            f"VRChatミュート判断: {action.value} (現在状態={self.is_vrchat_muted})"
+        )
+        if action is MuteAction.SEND_TOGGLE:
             self.add_log("VRChatマイクをミュートします。", "osc")
-            logger.info("VRChatミュート実行")
+            self.muted_by_snoreguard = True
             self.vrc_handler.toggle_mute()
-        elif self.is_vrchat_muted is True:
+        elif action is MuteAction.ALREADY_MUTED:
             self.add_log("VRChatは既にミュートです。", "osc")
-            logger.debug("VRChatは既にミュート状態")
         else:
-            if not self.is_awaiting_mute_sync:
-                self.add_log("VRChatミュート状態が不明。同期します。", "osc")
-                self.is_awaiting_mute_sync = True
-                if self.sync_timeout_id:
-                    self.root.after_cancel(self.sync_timeout_id)
-                self.sync_timeout_id = self.root.after(
-                    3000, self._cancel_mute_sync_timeout
-                )
-                self.vrc_handler.toggle_mute()
-            else:
-                self.add_log("ミュート状態の同期待機中です。", "osc")
+            self.add_log(
+                "VRChatのミュート状態が不明なため送信しません"
+                "（VRChatからMuteSelfを受信できていません）。",
+                "warning",
+            )
 
     def _on_rule_setting_change(
         self, name: str, value_str: str, label_var: tk.StringVar, is_int: bool
@@ -1008,27 +1004,15 @@ class SnoreGuardApp:
         )
 
     def _update_internal_mute_state(self, is_muted: bool):
-        """内部ミュート状態更新"""
-        if self.is_vrchat_muted != is_muted and self.is_awaiting_mute_sync:
+        """VRChat から受信したミュート状態を内部状態に反映"""
+        if self.is_vrchat_muted is None:
             self.add_log(
-                f"ミュート同期完了: {'ミュート' if is_muted else 'ミュート解除'}",
+                f"VRChatのミュート状態を同期しました: {'ミュート' if is_muted else 'ミュート解除'}",
                 "vrchat",
             )
-            self._cancel_mute_sync_timeout(success=True)
-            if not is_muted:
-                self.add_log("再度ミュート操作を送信します。", "osc")
-                self.root.after(150, self.vrc_handler.toggle_mute)
         self.is_vrchat_muted = is_muted
-
-    def _cancel_mute_sync_timeout(self, success=False):
-        """ミュート同期タイムアウトキャンセル"""
-        if self.sync_timeout_id:
-            self.root.after_cancel(self.sync_timeout_id)
-        self.sync_timeout_id = None
-        if self.is_awaiting_mute_sync:
-            if not success:
-                self.add_log("ミュート同期がタイムアウトしました。", "warning")
-            self.is_awaiting_mute_sync = False
+        if not is_muted:
+            self.muted_by_snoreguard = False
 
     def _check_for_updates_background(self):
         """バックグラウンドでアップデートを確認する"""
