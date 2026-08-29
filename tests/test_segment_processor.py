@@ -86,5 +86,7 @@ def test_skipped_chunk_drops_open_segment(monkeypatch):
         raise ValueError("pyin failed")
 
     monkeypatch.setattr(rp.librosa, "pyin", boom)
-    assert processor.process_audio_chunk(np.zeros(16000, dtype=np.float32)) == {}
+    rng = np.random.default_rng(0)
+    loud = (rng.standard_normal(16000) * 0.3).astype(np.float32)
+    assert processor.process_audio_chunk(loud) == {}
     assert processor.segment_processor._open_frames == 0

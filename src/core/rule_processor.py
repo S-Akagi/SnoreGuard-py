@@ -56,22 +56,32 @@ class FeatureExtractor:
         （1 + (len(audio_chunk) - frame_length) // hop_length）で返る。
         """
         try:
-            f0, _voiced_flag, voiced_probs = librosa.pyin(
+            rms = librosa.feature.rms(
                 y=audio_chunk,
-                fmin=PYIN_FMIN_HZ,
-                fmax=PYIN_FMAX_HZ,
                 frame_length=self.frame_length,
                 hop_length=self.hop_length,
-                sr=self.sample_rate,
                 center=False,
-            )
-            return {
-                "rms": librosa.feature.rms(
+            )[0]
+            # pyin は他の特徴量の数倍のコストがかかり、音声読み取りスレッドを
+            # 塞ぐ。エネルギー閾値を超えるフレームが 1 つも無いチャンクは
+            # energy_mask が全 False になり final_mask も必ず全 False なので、
+            # pyin をスキップしてもマスク結果は変わらない。
+            if float(np.max(rms)) > self.settings.energy_threshold:
+                f0, _voiced_flag, voiced_probs = librosa.pyin(
                     y=audio_chunk,
+                    fmin=PYIN_FMIN_HZ,
+                    fmax=PYIN_FMAX_HZ,
                     frame_length=self.frame_length,
                     hop_length=self.hop_length,
+                    sr=self.sample_rate,
                     center=False,
-                )[0],
+                )
+                f0 = np.nan_to_num(f0, nan=0.0)
+            else:
+                f0 = np.zeros_like(rms)
+                voiced_probs = np.zeros_like(rms)
+            return {
+                "rms": rms,
                 "spectral_centroid": librosa.feature.spectral_centroid(
                     y=audio_chunk,
                     sr=self.sample_rate,
@@ -85,7 +95,7 @@ class FeatureExtractor:
                     hop_length=self.hop_length,
                     center=False,
                 )[0],
-                "f0": np.nan_to_num(f0, nan=0.0),
+                "f0": f0,
                 "voiced_probs": voiced_probs,
             }
         except Exception as e:
