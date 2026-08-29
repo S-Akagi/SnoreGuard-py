@@ -4,6 +4,11 @@ from collections.abc import Callable
 
 import numpy as np
 import sounddevice as sd
+from core.constants import (
+    ANALYSIS_CHUNK_SECONDS,
+    FRAME_LENGTH,
+    SAMPLE_RATE as CORE_SAMPLE_RATE,
+)
 from core.rule_processor import RuleBasedProcessor
 
 logger = logging.getLogger(__name__)
@@ -17,10 +22,12 @@ class AudioService:
     - スレッド管理
     """
 
-    SAMPLE_RATE = 16000  # サンプリングレート
+    # 検出エンジンと同じ値を使う（core.constants が単一のソース）。
+    # 属性名は呼び出し側（ui.py など）の互換のため従来どおり。
+    SAMPLE_RATE = CORE_SAMPLE_RATE  # サンプリングレート
     VIZ_CHUNK_SIZE = 800  # 0.05秒
-    ANALYSIS_CHUNK_DURATION_S = 1.0  # 分析チャンクの長さ
-    N_FFT = 800  # FFTのサイズ
+    ANALYSIS_CHUNK_DURATION_S = ANALYSIS_CHUNK_SECONDS  # 分析チャンクの長さ
+    N_FFT = FRAME_LENGTH  # FFTのサイズ（解析フレーム長と同じ）
 
     _spectrum_buffer: np.ndarray | None = None  # スペクトラムバッファ
     _fft_buffer: np.ndarray | None = None  # FFTバッファ

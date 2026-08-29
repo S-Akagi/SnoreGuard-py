@@ -99,7 +99,7 @@ class FeatureExtractor:
                 "voiced_probs": voiced_probs,
             }
         except Exception as e:
-            raise FeatureExtractionError(str(e)) from e
+            raise FeatureExtractionError(f"{type(e).__name__}: {e}") from e
 
 
 class MaskProcessor:

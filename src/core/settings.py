@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""検出ルール・スケジューラの設定データクラスと、その検証ユーティリティ。"""
+"""検出ルール・スケジューラの設定データクラスと、その検証ユーティリティ。
+
+注意: このモジュールに ``from __future__ import annotations`` を追加してはいけない。
+追加すると dataclasses の ``field.type`` が実際の型ではなく文字列 "int" になり、
+sanitized() / from_dict() の ``f.type is int`` 判定が常に False になって、
+int のフィールドが float 化してしまう。
+"""
 
 import logging
 import math

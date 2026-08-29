@@ -1,4 +1,8 @@
-"""検出エンジンと自動キャリブレーションで共有する信号処理の定数。"""
+"""検出エンジン（RuleBasedProcessor 配下）の信号処理定数。
+
+auto_calibrator.py はいまも独自の値（frame 480 / hop 240 / pyin 50-400Hz）を
+ハードコードしており、ここの定数は共有していない。両者の統一は後続フェーズで行う。
+"""
 
 SAMPLE_RATE = 16000
 FRAME_LENGTH = 800  # 50 ms
