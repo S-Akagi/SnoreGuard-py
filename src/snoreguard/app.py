@@ -61,6 +61,19 @@ def _get_settings_file_path():
 SETTINGS_FILE = _get_settings_file_path()
 UPDATE_INTERVAL_MS = 50
 
+# add_log() のレベルタグ → logging のレベル。未知のタグは INFO 扱い。
+LOG_LEVEL_BY_TAG: dict[str, int] = {
+    "error": logging.ERROR,
+    "warning": logging.WARNING,
+    "detection": logging.INFO,
+    "success": logging.INFO,
+    "system": logging.INFO,
+    "osc": logging.INFO,
+    "vrchat": logging.INFO,
+    "scheduler": logging.INFO,
+    "info": logging.INFO,
+}
+
 logger = logging.getLogger(__name__)
 
 
@@ -913,7 +926,12 @@ class SnoreGuardApp:
         self.periodicity_timer_start_time = res.get("first_event_timestamp")
 
     def add_log(self, message: str, level: str = "info"):
-        """ログ追加"""
+        """ログ追加。GUI のテキストボックスとローテーションログファイルの両方へ。
+
+        ウィジェットが無い（未生成・破棄済み）場合でも記録は残す必要があるため、
+        ファイルログへの転送はウィジェット存在チェックより前に行う。
+        """
+        logger.log(LOG_LEVEL_BY_TAG.get(level, logging.INFO), message)
         try:
             if not self.log_text or not self.log_text.winfo_exists():
                 return
