@@ -509,9 +509,9 @@ class SnoreGuardApp:
         if not self.is_running:
             logger.debug("ビジュアル更新をスキップ: 検出停止中")
             return
-        # 解析結果が届かなくなる障害も拾うため、キューではなくタイマーで監視する
-        self._check_silence()
         try:
+            # 解析結果が届かなくなる障害も拾うため、キューではなくタイマーで監視する
+            self._check_silence()
             # イベント検出後の周期性タイマー処理
             if self.periodicity_timer_start_time:
                 elapsed = (

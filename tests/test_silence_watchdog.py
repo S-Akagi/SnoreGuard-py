@@ -3,13 +3,14 @@
 UI 側のメソッドは Tk ルートを作らずに、スタブへ束縛して呼び出す。
 """
 
+import tkinter as tk
 from datetime import datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import numpy as np
 
-from snoreguard.app import SnoreGuardApp
+from snoreguard.app import UPDATE_INTERVAL_MS, SnoreGuardApp
 
 TIMEOUT_S = SnoreGuardApp.SILENCE_WARN_AFTER_S
 
@@ -88,3 +89,24 @@ def test_note_analysis_result_ignores_silent_rms():
     )
     assert stub._last_analysis_time is not None
     assert stub._last_sound_time is None
+
+
+def test_update_visuals_reschedules_when_check_silence_raises():
+    """_check_silence が例外を投げても描画ループの再スケジュールは止まらない"""
+    stub = SimpleNamespace(
+        is_running=True,
+        root=MagicMock(),
+        data_queue=MagicMock(),
+        periodicity_timer_start_time=None,
+        periodicity_progressbar=None,
+        _check_silence=MagicMock(side_effect=tk.TclError("boom")),
+        _update_visuals=MagicMock(),
+    )
+    stub.data_queue.empty.return_value = True
+
+    try:
+        SnoreGuardApp._update_visuals(stub)
+    except tk.TclError:
+        pass
+
+    stub.root.after.assert_called_once_with(UPDATE_INTERVAL_MS, stub._update_visuals)
