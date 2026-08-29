@@ -17,7 +17,9 @@ SLIDER_RANGES: dict[str, tuple[float, float, float]] = {
     "zcr_threshold": (0.01, 0.15, 0.005),
     "min_duration_seconds": (0.05, 1.0, 0.05),
     "max_duration_seconds": (0.5, 3.0, 0.1),
-    "f0_min_hz": (70, 150, 1),
+    # 下限は pyin の探索下限 (PYIN_FMIN_HZ = 50Hz) に合わせる。低い声の
+    # いびき（F0 が 70Hz 未満）でも利用者が調整できるようにするため。
+    "f0_min_hz": (50, 150, 1),
     "f0_max_hz": (100, 300, 1),
     "periodicity_event_count": (2, 10, 1),
     "periodicity_window_seconds": (10, 120, 1),

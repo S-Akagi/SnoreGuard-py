@@ -138,3 +138,18 @@ def test_format_setting_value():
 
 def test_f0_min_gap_constant():
     assert F0_MIN_GAP_HZ == 20.0
+
+
+def test_f0_min_slider_reaches_pyin_lower_bound():
+    """F0最小値は pyin の探索下限 50Hz まで下げられる（低い声のいびき対策）"""
+    from core.constants import PYIN_FMIN_HZ
+
+    lo, hi, _step = SLIDER_RANGES["f0_min_hz"]
+    assert lo == PYIN_FMIN_HZ
+    settings = RuleSettings(f0_min_hz=50.0, f0_max_hz=150.0)
+    assert settings.validate() == []
+    assert settings.sanitized().f0_min_hz == 50.0
+
+
+def test_f0_min_below_slider_range_is_clamped():
+    assert RuleSettings(f0_min_hz=10.0).sanitized().f0_min_hz == 50.0
