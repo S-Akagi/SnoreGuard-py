@@ -10,6 +10,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # sounddevice は Linux 版 wheel に PortAudio を同梱しないため、
+      # import 時に libportaudio が必要（macOS/Windows の wheel は同梱済み）
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libportaudio2
       - uses: astral-sh/setup-uv@v6
         with:
           enable-cache: true
