@@ -16,8 +16,8 @@ added_files = [
 ]
 
 a = Analysis(
-    ['src\\main.py'],
-    pathex=[str(project_root)],
+    [str(project_root / 'src' / 'main.py')],
+    pathex=[str(project_root / 'src')],
     binaries=[],
     datas=added_files,
     hiddenimports=[
