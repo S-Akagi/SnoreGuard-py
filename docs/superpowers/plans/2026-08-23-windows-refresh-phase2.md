@@ -685,6 +685,13 @@ git commit -m "fix: 無人経路（スケジューラ/OSC）の開始失敗は�
 
 ### Task 15: VRChat 接続状態を実測で表示し、検出状態ラベルと分離する
 
+**Phase 1 最終レビューからの持ち越し（このタスクで解消する）:** 検出開始時の
+「⚠ ミュート状態が未取得」表示（`app.py` の `_warn_mute_state_unknown`）が sticky で、
+`MuteSelf` を受信して同期できても `_update_internal_mute_state` がラベルを戻さない。
+さらにこの警告は直前に設定された「検出中」を上書きするため、該当ユーザーは「検出中」を一度も見られない。
+本タスクで `_set_detection_status` と VRChat インジケータを分離したら、ミュート状態未取得の警告は
+`vrc_status_var` 側（黄色）に移し、`_update_internal_mute_state` が同期成功時にそれを解除すること。
+
 **Phase 1 Task 9 からの持ち越し:** 受信ポート bind 失敗時の赤ラベル（`_warn_receiver_unavailable`）は
 `_update_osc_status_ui` からの上書きこそ防いだが、検出ライフサイクル側の `status_label_var.set`
 （「検出中」「音声入力エラー」「システム待機中」「イビキ検出!」）には依然として消される。本タスクで
@@ -1274,6 +1281,12 @@ git commit -m "fix: キャリブレーションの停止を即時反映し、解
 ---
 
 ### Task 17: スレッド境界の規律（queue 経由の通知・非ブロッキング停止・OSC 委譲）
+
+**Phase 1 最終レビューからの持ち越し:** `add_log` がファイルログにもミラーするようになった結果、
+`audio_service.py` のバッファオーバーフロー警告が二重に記録される（`logger.warning` と
+`log_callback` → `add_log` → `logger.log` の両方）。本タスクで導入する `_emit_log` と
+10 秒レート制限に載せ替える際、ワーカー側の直接 `logger.warning` を削除して一本化すること。
+
 
 **Files:**
 - Modify: `src/snoreguard/audio_service.py`（`__init__`, `start`, `stop`, `_process_stream_data`, 新規 `_emit_log`）
