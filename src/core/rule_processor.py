@@ -43,9 +43,17 @@ class FeatureExtractor:
     def extract_features(self, audio_chunk: np.ndarray) -> Dict[str, np.ndarray]:
         """全特徴量を一括抽出。失敗時は FeatureExtractionError。
 
-        すべての配列は同じフレーム数（1 + len(audio) // hop_length）で返る。
-        旧実装の固定 20 フレームのフォールバックは形状不整合で検出スレッドを
-        落としていたため廃止した。
+        audio_chunk は「前チャンク末尾 carry_samples 個 + 今回のチャンク」を
+        連結した拡張バッファであることを前提とする。すべての librosa 呼び出しを
+        center=False で行うため、フレーム i は拡張バッファの
+        [i*hop_length, i*hop_length + frame_length) を覆う。
+        center=True（librosa の既定）だとチャンクごとに反射パディングされ、
+        チャンク端のフレームが合成波形から計算されてしまう。その結果
+        スペクトル重心が閾値を超え、連続音でも必ずチャンク境界でマスクが
+        False になり、セグメントの持ち越しが機能しなくなる。
+
+        すべての配列は同じフレーム数
+        （1 + (len(audio_chunk) - frame_length) // hop_length）で返る。
         """
         try:
             f0, _voiced_flag, voiced_probs = librosa.pyin(
@@ -55,23 +63,27 @@ class FeatureExtractor:
                 frame_length=self.frame_length,
                 hop_length=self.hop_length,
                 sr=self.sample_rate,
+                center=False,
             )
             return {
                 "rms": librosa.feature.rms(
                     y=audio_chunk,
                     frame_length=self.frame_length,
                     hop_length=self.hop_length,
+                    center=False,
                 )[0],
                 "spectral_centroid": librosa.feature.spectral_centroid(
                     y=audio_chunk,
                     sr=self.sample_rate,
                     n_fft=self.frame_length,
                     hop_length=self.hop_length,
+                    center=False,
                 )[0],
                 "zcr": librosa.feature.zero_crossing_rate(
                     y=audio_chunk,
                     frame_length=self.frame_length,
                     hop_length=self.hop_length,
+                    center=False,
                 )[0],
                 "f0": np.nan_to_num(f0, nan=0.0),
                 "voiced_probs": voiced_probs,
@@ -161,11 +173,23 @@ class SegmentProcessor:
     本来の意味で機能し、境界で分断された 1 回のいびきも 1 イベントになる。
     """
 
-    def __init__(self, hop_length: int, sample_rate: int, settings: RuleSettings):
+    def __init__(
+        self,
+        hop_length: int,
+        sample_rate: int,
+        settings: RuleSettings,
+        frame_origin_offset_seconds: float = 0.0,
+    ):
         self.hop_length = hop_length
         self.sample_rate = sample_rate
         self.settings = settings
         self.frame_seconds = hop_length / sample_rate
+        # フレーム 0 の開始時刻が chunk_start からどれだけずれているか（秒）。
+        # RuleBasedProcessor は前チャンク末尾を先頭に連結した拡張バッファを
+        # center=False で分割するため、フレーム 0 は chunk_start より
+        # (FRAME_LENGTH - HOP_LENGTH) / SAMPLE_RATE 秒だけ前から始まる。
+        # 負の値を渡すことでイベント時刻を実音声の時刻に合わせる。
+        self.frame_origin_offset_seconds = frame_origin_offset_seconds
         self.reset()
 
     def reset(self):
@@ -207,7 +231,9 @@ class SegmentProcessor:
             j = i
             while j < n and final_mask[j]:
                 j += 1
-            self._open_start = chunk_start + timedelta(seconds=i * self.frame_seconds)
+            self._open_start = chunk_start + timedelta(
+                seconds=i * self.frame_seconds + self.frame_origin_offset_seconds
+            )
             self._extend_open(features, i, j)
             if j >= n:
                 break  # チャンク末尾まで True → 持ち越し
@@ -292,13 +318,23 @@ class RuleBasedProcessor:
         # 帯域通過フィルタの内部状態 (n_sections, 2)
         self._zi = sosfilt_zi(self.sos_filter) * 0.0
 
+        # チャンクをまたいでフレーム分割を連続させるための持ち越しサンプル。
+        # 前チャンク末尾の (frame_length - hop_length) 個を次チャンクの先頭に
+        # 連結すると、center=False でも境界をまたぐフレームが欠落しない。
+        self._carry_samples = self.frame_length - self.hop_length
+        self._carry = np.zeros(self._carry_samples, dtype=np.float32)
+
         # コンポーネント初期化
         self.feature_extractor = FeatureExtractor(
             self.sample_rate, self.frame_length, self.hop_length, self.settings
         )
         self.mask_processor = MaskProcessor(self.max_frames, self.settings)
         self.segment_processor = SegmentProcessor(
-            self.hop_length, self.sample_rate, self.settings
+            self.hop_length,
+            self.sample_rate,
+            self.settings,
+            # 拡張バッファの先頭は chunk_start より _carry_samples 分だけ過去
+            frame_origin_offset_seconds=-self._carry_samples / self.sample_rate,
         )
 
         self._warmup_librosa()
@@ -319,6 +355,7 @@ class RuleBasedProcessor:
         self.recent_events.clear()
         self.segment_processor.reset()
         self._zi[...] = 0.0
+        self._carry[...] = 0.0
         logger.debug("周期性イベントキューがリセットされました。")
 
     def process_audio_chunk(
@@ -332,13 +369,22 @@ class RuleBasedProcessor:
 
         filtered_chunk, self._zi = sosfilt(self.sos_filter, audio_chunk, zi=self._zi)
 
+        # 前チャンクの末尾を先頭に連結してフレーム分割を連続させる
+        extended_chunk = np.concatenate(
+            (self._carry, np.asarray(filtered_chunk, dtype=np.float32))
+        )
+
         try:
-            features = self.feature_extractor.extract_features(filtered_chunk)
+            features = self.feature_extractor.extract_features(extended_chunk)
         except FeatureExtractionError as e:
             logger.warning(f"特徴量抽出に失敗したためチャンクをスキップ: {e}")
-            # 音声が 1 チャンク分欠落するため、継続中のセグメントは破棄する
+            # 音声が 1 チャンク分欠落するため、継続中のセグメントと
+            # 持ち越しサンプル（フレーム分割の連続性）は破棄する
             self.segment_processor.reset()
+            self._carry[...] = 0.0
             return {}
+
+        self._carry[...] = extended_chunk[-self._carry_samples :]
 
         features = self._limit_frame_count(features)
         pass_masks, final_mask = self.mask_processor.create_masks(features)

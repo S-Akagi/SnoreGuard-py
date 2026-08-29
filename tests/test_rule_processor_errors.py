@@ -33,7 +33,7 @@ def test_process_audio_chunk_skips_chunk_instead_of_crashing(monkeypatch):
     assert processor.process_audio_chunk(np.zeros(16000, dtype=np.float32)) == {}
 
 
-def test_process_audio_chunk_returns_81_frames_for_one_second():
+def test_process_audio_chunk_returns_80_frames_for_one_second():
     processor = RuleBasedProcessor(RuleSettings(), lambda: None)
     result = processor.process_audio_chunk(np.zeros(16000, dtype=np.float32))
-    assert len(result["final_mask_frames"]) == 81
+    assert len(result["final_mask_frames"]) == 80
