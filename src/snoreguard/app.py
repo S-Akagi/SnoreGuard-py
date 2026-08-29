@@ -329,8 +329,32 @@ class SnoreGuardApp:
         # VRChatへ状態フィードバック
         self._send_status_feedback()
 
+        # 自動ミュートが効かない状態で就寝してしまうのを防ぐ
+        self._warn_if_mute_state_unknown()
+
         # ビジュアル更新
         self.root.after(UPDATE_INTERVAL_MS, self._update_visuals)
+
+    def _warn_if_mute_state_unknown(self):
+        """自動ミュート ON なのに VRChat のミュート状態が未取得なら警告する。
+
+        is_vrchat_muted は VRChat からの /avatar/parameters/MuteSelf でしか
+        埋まらない。VRChat 起動済みのまま SnoreGuard を起動すると 1 度も
+        届かないため、検出しても盲目トグルを避けて何も送らない状態になる。
+        """
+        try:
+            auto_mute_on = bool(self.auto_mute_var.get())
+        except (AttributeError, tk.TclError):
+            return
+        if not auto_mute_on or self.is_vrchat_muted is not None:
+            return
+        self.add_log(
+            "VRChat のミュート状態が未取得です。VRChat 側で一度マイクを"
+            "ミュート/解除すると同期されます。このままでは自動ミュートは"
+            "送信されません。",
+            "warning",
+        )
+        self.status_label_var.set("⚠ ミュート状態が未取得")
 
     def _handle_initialization_error(self, error_message: str):
         """初期化失敗時のUIリセットとエラー表示"""
