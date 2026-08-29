@@ -26,7 +26,8 @@ class CalibrationModal:
     ):
         self.parent = parent
         self.on_completion = on_completion
-        self.auto_calibrator = AutoCalibrator()
+        self.app = None  # アプリインスタンスは後で設定される
+        self.auto_calibrator = None  # アプリインスタンス設定後に初期化される
         self.current_stage = 0
         self.modal_window = None
         self.original_settings = None
@@ -47,6 +48,10 @@ class CalibrationModal:
         """モーダルウィンドウを表示"""
         if self.modal_window is not None:
             return
+
+        # AutoCalibratorをアプリインスタンス付きで初期化
+        if self.auto_calibrator is None:
+            self.auto_calibrator = AutoCalibrator(app_instance=self.app)
 
         self.modal_window = ctk.CTkToplevel(self.parent)
         self.modal_window.title("自動キャリブレーション")
@@ -70,7 +75,7 @@ class CalibrationModal:
 
     def close(self):
         """モーダルウィンドウを閉じる"""
-        if self.auto_calibrator.is_calibrating:
+        if self.auto_calibrator and self.auto_calibrator.is_calibrating:
             self.auto_calibrator.stop_calibration()
 
         if self.modal_window:
@@ -280,6 +285,19 @@ class CalibrationModal:
     def start_calibration(self):
         """キャリブレーション開始"""
         try:
+            # 入力デバイスのチェック（録音開始時にも再度チェックされる）
+            try:
+                self.auto_calibrator.recorder._select_device()
+            except IOError:
+                # デバイス選択エラーの場合、ダイアログ表示
+                from tkinter import messagebox
+
+                messagebox.showerror(
+                    "入力デバイス未選択",
+                    "ダッシュボードで入力デバイスを選択してから\n自動調整を開始してください。",
+                )
+                return
+
             # 現在の設定を保存（アプリインスタンスから取得）
             if hasattr(self, "app") and hasattr(self.app, "rule_settings"):
                 from copy import deepcopy
@@ -457,68 +475,28 @@ class CalibrationModal:
         try:
             if not self.original_settings or not self.calibration_result:
                 return
+            from core.settings import format_setting_value
 
-            from dataclasses import fields
-
-            old_settings = self.original_settings
-            new_settings = self.calibration_result.optimal_settings
+            new_settings = self.calibration_result.optimal_settings.sanitized()
             confidence = self.calibration_result.confidence_scores.get(
                 "total_confidence", 0
             )
-
-            # 設定項目の日本語名マッピング
-            field_names = {
-                "energy_threshold": "エネルギー閾値",
-                "f0_confidence_threshold": "F0信頼度閾値",
-                "spectral_centroid_threshold": "スペクトル重心閾値",
-                "zcr_threshold": "ZCR閾値",
-                "min_duration_seconds": "最小持続時間",
-                "max_duration_seconds": "最大持続時間",
-                "f0_min_hz": "F0最小値",
-                "f0_max_hz": "F0最大値",
-                "periodicity_event_count": "周期イベント数",
-                "periodicity_window_seconds": "周期ウィンドウ",
-                "min_event_interval_seconds": "最小イベント間隔",
-                "max_event_interval_seconds": "最大イベント間隔",
-            }
-
-            # 結果テキスト作成
             result_text = f"統計的最適化完了 (信頼度: {confidence:.1%})\n\n"
             result_text += "=== 変更された設定値 ===\n"
-
-            changes_found = False
-
-            for field in fields(old_settings):
-                field_name = field.name
-                old_value = getattr(old_settings, field_name)
-                new_value = getattr(new_settings, field_name)
-
-                # 値が変更された場合のみ表示
-                if abs(old_value - new_value) > 1e-6:  # 浮動小数点数の比較
-                    changes_found = True
-                    display_name = field_names.get(field_name, field_name)
-
-                    # 値の形式を整える
-                    if isinstance(old_value, float):
-                        old_str = f"{old_value:.4f}".rstrip("0").rstrip(".")
-                        new_str = f"{new_value:.4f}".rstrip("0").rstrip(".")
-                    else:
-                        old_str = str(old_value)
-                        new_str = str(new_value)
-
-                    result_text += f"{display_name}:\n  {old_str} → {new_str}\n\n"
-
-            if not changes_found:
+            changes = self.original_settings.diff(new_settings)
+            for _name, label, old, new in changes:
+                result_text += (
+                    f"{label}:\n  {format_setting_value(old)} → "
+                    f"{format_setting_value(new)}\n\n"
+                )
+            if not changes:
                 result_text += "変更された設定項目はありません\n"
-
             result_text += "========================"
 
-            # テキストボックスに結果を表示
             self.result_text.configure(state="normal")
             self.result_text.delete("1.0", "end")
             self.result_text.insert("1.0", result_text)
             self.result_text.configure(state="disabled")
-
         except Exception as e:
             logger.error(f"変更内容表示エラー: {e}", exc_info=True)
 

@@ -1,15 +1,14 @@
 @echo off
+chcp 65001 >nul
+rem リポジトリルートへ移動（どこから実行しても同じ結果にする）
+cd /d "%~dp0.."
 
-echo Build SnoreGuard with PyInstaller
-echo =====================================
+echo [1/3] 依存関係を lock どおりに同期します...
+uv sync --locked --no-dev --group build
+if errorlevel 1 exit /b 1
 
-echo Cleaning previous builds...
-if exist "build" rmdir /s /q "build"
-if exist "dist" rmdir /s /q "dist"
+echo [2/3] PyInstaller でビルドします...
+uv run --no-sync pyinstaller SnoreGuard.spec --clean
+if errorlevel 1 exit /b 1
 
-echo Building with spec file...
-uv run pyinstaller SnoreGuard.spec --clean
-
-echo Build completed!
-echo The executable is located in: dist/SnoreGuard.exe
-pause
+echo [3/3] 完了: dist\SnoreGuard.exe

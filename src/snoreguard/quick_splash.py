@@ -1,6 +1,9 @@
+import logging
 import tkinter as tk
 import threading
 import time
+
+logger = logging.getLogger(__name__)
 
 
 class QuickSplashScreen:
@@ -200,7 +203,7 @@ class QuickSplashScreen:
                     # メインスレッドで完了コールバックを実行
                     self.splash_root.after(0, self.on_initialization_complete)
             except Exception as e:
-                print(f"初期化エラー: {e}")
+                logger.error(f"初期化エラー: {e}", exc_info=True)
                 self.update_status("エラーが発生しました")
                 time.sleep(2)  # エラーメッセージを見せるための待機
                 if self.splash_root:

@@ -7,6 +7,8 @@ import customtkinter as ctk
 import numpy as np
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure
+
+from core.settings import FIELD_LABELS, SLIDER_RANGES
 from snoreguard import __version__
 
 logger = logging.getLogger(__name__)
@@ -497,18 +499,7 @@ class UIBuilder:
         card.grid_columnconfigure(0, weight=1)
 
         params = [
-            ("energy_threshold", "エネルギー閾値", (0.0, 0.1, 0.001)),
-            ("f0_confidence_threshold", "F0信頼度閾値", (0.01, 0.4, 0.005)),
-            ("spectral_centroid_threshold", "スペクトル重心閾値", (300, 1500, 10)),
-            ("zcr_threshold", "ZCR閾値", (0.01, 0.15, 0.005)),
-            ("min_duration_seconds", "最小持続時間(s)", (0.05, 1.0, 0.05)),
-            ("max_duration_seconds", "最大持続時間(s)", (0.5, 3.0, 0.1)),
-            ("f0_min_hz", "F0最小値(Hz)", (70, 150, 1)),
-            ("f0_max_hz", "F0最大値(Hz)", (100, 300, 1)),
-            ("periodicity_event_count", "周期イベント数", (2, 10, 1)),
-            ("periodicity_window_seconds", "周期ウィンドウ(s)", (10, 120, 1)),
-            ("min_event_interval_seconds", "最小イベント間隔(s)", (1.0, 10.0, 0.5)),
-            ("max_event_interval_seconds", "最大イベント間隔(s)", (5.0, 20.0, 0.5)),
+            (name, FIELD_LABELS[name], SLIDER_RANGES[name]) for name in SLIDER_RANGES
         ]
         for i, (name, display, (min_v, max_v, res)) in enumerate(params):
             frame = ctk.CTkFrame(card, fg_color="transparent")

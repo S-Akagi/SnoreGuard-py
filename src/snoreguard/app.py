@@ -4,7 +4,6 @@ import queue
 import threading
 import time
 import tkinter as tk
-import winsound
 from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
@@ -14,8 +13,10 @@ import customtkinter as ctk
 import numpy as np
 import sounddevice as sd
 
-from core.settings import RuleSettings, TimeSchedulerSettings
+from core.settings import RuleSettings, TimeSchedulerSettings, format_setting_value
+from snoreguard import notify
 from snoreguard.audio_service import AudioService
+from snoreguard.mute_policy import MuteAction, decide_mute_action
 from snoreguard.settings_manager import SettingsManager
 from snoreguard.time_scheduler import TimeScheduler
 from snoreguard.vrc.handler import VRCHandler
@@ -60,11 +61,27 @@ def _get_settings_file_path():
 SETTINGS_FILE = _get_settings_file_path()
 UPDATE_INTERVAL_MS = 50
 
+# add_log() のレベルタグ → logging のレベル。未知のタグは INFO 扱い。
+LOG_LEVEL_BY_TAG: dict[str, int] = {
+    "error": logging.ERROR,
+    "warning": logging.WARNING,
+    "detection": logging.INFO,
+    "success": logging.INFO,
+    "system": logging.INFO,
+    "osc": logging.INFO,
+    "vrchat": logging.INFO,
+    "scheduler": logging.INFO,
+    "info": logging.INFO,
+}
+
 logger = logging.getLogger(__name__)
 
 
 # アプリケーションクラス
 class SnoreGuardApp:
+    RESTART_DELAYS_S = (5, 10, 20, 40, 60)  # 異常終了後の自動再開の待ち時間
+    SILENCE_WARN_AFTER_S = 60  # この秒数 RMS がゼロなら警告
+
     def __init__(self, root: ctk.CTk):
         logger.debug("SnoreGuardApp初期化開始")
         ctk.set_appearance_mode("dark")
@@ -77,10 +94,14 @@ class SnoreGuardApp:
         self.input_devices = {}  # 入力デバイス
         self.periodicity_timer_start_time = None  # 周期タイマー開始時間
         self.is_vrchat_muted = None  # VRChatミュート状態
-        self.is_awaiting_mute_sync = False  # ミュート同期待機フラグ
-        self.sync_timeout_id = None  # ミュート同期タイムアウトID
+        self.muted_by_snoreguard = False  # SnoreGuard がミュートしたか
         self.is_initializing = False  # 初期化中フラグ
         self.initialization_progress = 0  # 初期化進捗
+        self._restart_attempt = 0  # 音声ストリーム異常終了後の再開試行回数
+        self._restart_after_id = None
+        self._last_sound_time = None  # 無音ウォッチドッグ用
+        self._last_analysis_time = None  # 解析結果の途絶を検知するウォッチドッグ用
+        self._silence_warned = False
 
         # 設定マネージャー初期化
         self.settings_manager = SettingsManager(Path(SETTINGS_FILE))
@@ -108,6 +129,7 @@ class SnoreGuardApp:
             self.data_queue,
             self.on_snore_detected_callback,
             self.add_log_threadsafe,
+            on_stream_stopped=self._on_audio_stream_stopped,
         )
 
         # VRChatハンドラー初期化
@@ -137,8 +159,14 @@ class SnoreGuardApp:
         # UI設定更新は少し遅らせて実行（UI要素が完全に準備されるまで待つ）
         self.root.after(100, self._update_ui_with_settings)
 
+        # 壊れた設定ファイルを初期化した場合は利用者へ通知
+        if self.settings_manager.last_error:
+            self.root.after(1500, self._notify_settings_recovery)
+
         # VRChatハンドラー開始
-        self.vrc_handler.start()
+        self.receiver_ok = self.vrc_handler.start()
+        if not self.receiver_ok:
+            self.root.after(1200, self._warn_receiver_unavailable)
         logger.debug("VRCハンドラー開始")
 
         # 初期状態フィードバック（OSC接続後に実行、遅延を短縮）
@@ -289,6 +317,10 @@ class SnoreGuardApp:
 
     def _finalize_detection_start(self, selected_mic_name: str):
         """初期化完了後のUI状態更新とビジュアル開始"""
+        self._restart_attempt = 0
+        self._last_sound_time = datetime.now()
+        self._last_analysis_time = self._last_sound_time
+        self._silence_warned = False
         self.is_running = True
         self.is_initializing = False
         self._update_control_state()
@@ -299,8 +331,32 @@ class SnoreGuardApp:
         # VRChatへ状態フィードバック
         self._send_status_feedback()
 
+        # 自動ミュートが効かない状態で就寝してしまうのを防ぐ
+        self._warn_if_mute_state_unknown()
+
         # ビジュアル更新
         self.root.after(UPDATE_INTERVAL_MS, self._update_visuals)
+
+    def _warn_if_mute_state_unknown(self):
+        """自動ミュート ON なのに VRChat のミュート状態が未取得なら警告する。
+
+        is_vrchat_muted は VRChat からの /avatar/parameters/MuteSelf でしか
+        埋まらない。VRChat 起動済みのまま SnoreGuard を起動すると 1 度も
+        届かないため、検出しても盲目トグルを避けて何も送らない状態になる。
+        """
+        try:
+            auto_mute_on = bool(self.auto_mute_var.get())
+        except (AttributeError, tk.TclError):
+            return
+        if not auto_mute_on or self.is_vrchat_muted is not None:
+            return
+        self.add_log(
+            "VRChat のミュート状態が未取得です。VRChat 側で一度マイクを"
+            "ミュート/解除すると同期されます。このままでは自動ミュートは"
+            "送信されません。",
+            "warning",
+        )
+        self.status_label_var.set("⚠ ミュート状態が未取得")
 
     def _handle_initialization_error(self, error_message: str):
         """初期化失敗時のUIリセットとエラー表示"""
@@ -341,6 +397,47 @@ class SnoreGuardApp:
         for _, _, scale in self.rule_setting_vars.values():
             scale.configure(state="disabled")
 
+    def _on_audio_stream_stopped(self, error: str | None):
+        """音声ワーカー終了通知（ワーカースレッドから呼ばれる）"""
+        ThreadSafeHandler.safe_after(self.root, self._handle_stream_stopped, error)
+
+    def _handle_stream_stopped(self, error: str | None):
+        """音声ワーカー終了の後処理（メインスレッド）"""
+        self.add_log("オーディオストリームを停止しました。", "system")
+        if error is None or not self.is_running:
+            return  # 利用者操作による正常停止
+        # 異常終了: UI を待機状態へ戻し、自動再開を試みる
+        self.is_running = False
+        self._update_control_state()
+        self.status_label_var.set("音声入力エラー")
+        self.add_log(f"音声入力が停止しました: {error}", "error")
+        self._send_status_feedback()
+        if self._restart_attempt < len(self.RESTART_DELAYS_S):
+            delay = self.RESTART_DELAYS_S[self._restart_attempt]
+            self._restart_attempt += 1
+            self.add_log(
+                f"{delay}秒後に再開を試みます ({self._restart_attempt}/{len(self.RESTART_DELAYS_S)})",
+                "warning",
+            )
+            self.status_label_var.set(f"再接続待機中 ({delay}s)")
+            self._restart_after_id = self.root.after(
+                delay * 1000, self._retry_start_detection
+            )
+        else:
+            self.add_log(
+                "自動再開を諦めました。マイクの接続を確認して手動で開始してください。",
+                "error",
+            )
+            notify.beep(600, 500)
+
+    def _retry_start_detection(self):
+        """自動再開（スケジューラ経路と同様に非対話で開始）"""
+        self._restart_after_id = None
+        if self.is_running or self.is_initializing:
+            return
+        self._populate_mic_list()  # デバイス一覧を取り直す（抜き差し対応は Phase 2）
+        self._start_detection()
+
     def _stop_detection(self):
         """音声検出を停止してシステムをリセット"""
         logger.debug("検出停止処理開始")
@@ -351,6 +448,10 @@ class SnoreGuardApp:
             return
 
         # 検出停止
+        if self._restart_after_id:
+            self.root.after_cancel(self._restart_after_id)
+            self._restart_after_id = None
+        self._restart_attempt = 0
         self.is_running = False
         self.audio_service.stop()  # 音声サービス停止
         logger.debug("音声サービス停止")
@@ -370,11 +471,7 @@ class SnoreGuardApp:
             pass
 
         # データキューリセット
-        while not self.data_queue.empty():
-            try:
-                self.data_queue.get_nowait()
-            except queue.Empty:
-                break
+        self._clear_data_queue()
 
         # UI状態更新
         self._update_control_state()
@@ -413,6 +510,8 @@ class SnoreGuardApp:
             logger.debug("ビジュアル更新をスキップ: 検出停止中")
             return
         try:
+            # 解析結果が届かなくなる障害も拾うため、キューではなくタイマーで監視する
+            self._check_silence()
             # イベント検出後の周期性タイマー処理
             if self.periodicity_timer_start_time:
                 elapsed = (
@@ -479,6 +578,59 @@ class SnoreGuardApp:
         except (AttributeError, NameError):
             pass
         self._update_detailed_status(res)
+        self._note_analysis_result(res)
+
+    def _note_analysis_result(self, res: dict):
+        """解析結果の到着時刻と、音が鳴っていた時刻を記録するだけ。
+
+        警告の判断はここでは行わない。解析結果が 1 件も届かなくなる障害
+        （ストリームのハングなど）を検知するため、判断は UI タイマー駆動の
+        _check_silence() 側に置いている。
+        """
+        now = datetime.now()
+        self._last_analysis_time = now
+        results = res.get("analysis_results") or {}
+        rms = results.get("rms")
+        if rms is not None and len(rms) > 0 and float(np.max(rms)) > 1e-6:
+            self._last_sound_time = now
+
+    def _check_silence(self):
+        """マイクの無音、または解析結果の途絶を一定時間で知らせる。
+
+        キュー到着ではなく UI タイマー（_update_visuals）から呼ぶ。
+        キュー駆動だと「データがまったく来ない」というウォッチドッグ本来の
+        対象を検知できないため。
+        """
+        now = datetime.now()
+        if self._last_sound_time is None:
+            self._last_sound_time = now
+        if self._last_analysis_time is None:
+            self._last_analysis_time = now
+        silent_seconds = (now - self._last_sound_time).total_seconds()
+        stalled_seconds = (now - self._last_analysis_time).total_seconds()
+
+        if max(silent_seconds, stalled_seconds) <= self.SILENCE_WARN_AFTER_S:
+            if self._silence_warned:
+                self._silence_warned = False
+                self.add_log("音声入力を再び検知しました。", "system")
+            return
+
+        if self._silence_warned:
+            return
+        self._silence_warned = True
+        if stalled_seconds > self.SILENCE_WARN_AFTER_S:
+            self.add_log(
+                "60秒以上、音声の解析結果が届いていません。"
+                "マイクが切断された可能性があります。一度停止して再開してください。",
+                "warning",
+            )
+            self.status_label_var.set("⚠ 解析が停止しています")
+        else:
+            self.add_log(
+                "60秒以上無音です。マイクの接続と Windows のマイクのプライバシー設定を確認してください。",
+                "warning",
+            )
+            self.status_label_var.set("⚠ 無音が続いています")
 
     def _draw_plots(self):
         """プロット更新"""
@@ -508,51 +660,53 @@ class SnoreGuardApp:
         logger.info("いびき検出イベント発生")
         self.add_log("いびきを検出しました！", "detection")
         self.status_label_var.set("イビキ検出!")
-        if self.notification_var.get():
-            winsound.Beep(1000, 200)
         if self.auto_mute_var.get():
             self._trigger_vrchat_mute()
+        if self.notification_var.get():
+            notify.beep(1000, 200)
         self.root.after(
             2000, lambda: self.is_running and self.status_label_var.set("🔊 検出中...")
         )
 
     def _trigger_vrchat_mute(self):
-        """VRChatミュート処理"""
-        logger.debug(f"VRChatミュート処理開始: 現在状態={self.is_vrchat_muted}")
-        if self.is_vrchat_muted is False:
+        """VRChatミュート処理。状態不明なら送らない（盲目トグルはミュート解除になり得る）"""
+        action = decide_mute_action(self.is_vrchat_muted)
+        logger.debug(
+            f"VRChatミュート判断: {action.value} (現在状態={self.is_vrchat_muted})"
+        )
+        if action is MuteAction.SEND_TOGGLE:
             self.add_log("VRChatマイクをミュートします。", "osc")
-            logger.info("VRChatミュート実行")
+            self.muted_by_snoreguard = True
             self.vrc_handler.toggle_mute()
-        elif self.is_vrchat_muted is True:
+        elif action is MuteAction.ALREADY_MUTED:
             self.add_log("VRChatは既にミュートです。", "osc")
-            logger.debug("VRChatは既にミュート状態")
         else:
-            if not self.is_awaiting_mute_sync:
-                self.add_log("VRChatミュート状態が不明。同期します。", "osc")
-                self.is_awaiting_mute_sync = True
-                if self.sync_timeout_id:
-                    self.root.after_cancel(self.sync_timeout_id)
-                self.sync_timeout_id = self.root.after(
-                    3000, self._cancel_mute_sync_timeout
-                )
-                self.vrc_handler.toggle_mute()
-            else:
-                self.add_log("ミュート状態の同期待機中です。", "osc")
+            self.add_log(
+                "VRChatのミュート状態が不明なため送信しません"
+                "（VRChatからMuteSelfを受信できていません）。",
+                "warning",
+            )
 
     def _on_rule_setting_change(
         self, name: str, value_str: str, label_var: tk.StringVar, is_int: bool
     ):
-        """ルール設定変更"""
+        """スライダー操作。共有オブジェクトを直接更新し、相互制約を保つ"""
         value = round(float(value_str)) if is_int else float(value_str)
-        label_var.set(f"{value}" if is_int else f"{value:.3f}")
         setattr(self.rule_settings, name, value)
+        sanitized = self.rule_settings.sanitized()
+        if sanitized != self.rule_settings:
+            # 相手側スライダー（f0_max など）を押し上げた場合は UI にも反映
+            self.rule_settings.copy_from(sanitized)
+            self._update_rule_settings_ui()
+        else:
+            label_var.set(format_setting_value(value))
 
     def _update_rule_settings_ui(self):
-        """ルール設定UI更新"""
+        """共有オブジェクトの値をスライダーとラベルへ反映"""
         for name, (var, label_var, _) in self.rule_setting_vars.items():
             value = getattr(self.rule_settings, name)
             var.set(value)
-            label_var.set(f"{value}" if isinstance(value, int) else f"{value:.3f}")
+            label_var.set(format_setting_value(value))
 
     def _populate_mic_list(self):
         """マイクリスト更新"""
@@ -724,6 +878,12 @@ class SnoreGuardApp:
         except (AttributeError, NameError):
             pass
 
+    def _notify_settings_recovery(self):
+        """壊れた設定ファイルを初期化したことを利用者に知らせる"""
+        message = self.settings_manager.last_error or ""
+        self.add_log(message, "warning")
+        messagebox.showwarning("設定ファイルを初期化しました", message)
+
     def _update_ui_with_settings(self):
         """設定UI更新"""
         self.notification_var.set(
@@ -732,14 +892,7 @@ class SnoreGuardApp:
         if self.HAS_OSC:
             self.auto_mute_var.set(self.app_settings.get("auto_mute_on_snore", True))
         if rule_settings_dict := self.app_settings.get("rule_settings"):
-            for key, value in rule_settings_dict.items():
-                try:
-                    if getattr(self.rule_settings, key, None) is not None or hasattr(
-                        self.rule_settings, key
-                    ):
-                        setattr(self.rule_settings, key, value)
-                except (AttributeError, TypeError):
-                    pass
+            self.rule_settings.copy_from(RuleSettings.from_dict(rule_settings_dict))
         self._update_rule_settings_ui()
         self._update_scheduler_settings_ui()
         self._update_control_state()
@@ -759,26 +912,42 @@ class SnoreGuardApp:
             self._send_status_feedback()
         logger.debug("設定保存完了")
 
-    def reset_settings(self):
-        """設定をデフォルト値にリセット"""
+    def apply_rule_settings(self, new_settings: RuleSettings, source: str):
+        """ルール設定を置き換える唯一の入口。
+
+        検出エンジンは self.rule_settings への参照を保持しているため、
+        新しいオブジェクトを代入せず copy_from で中身だけ更新する。
+        """
+        sanitized = new_settings.sanitized()
+        changes = self.rule_settings.diff(sanitized)
+        self.rule_settings.copy_from(sanitized)
+        self._update_rule_settings_ui()
         try:
-            # デフォルト設定を取得
-            default_settings = self._get_default_settings()
+            self.periodicity_status_var.set(
+                f"0 / {self.rule_settings.periodicity_event_count}"
+            )
+        except (AttributeError, tk.TclError):
+            pass
+        self.audio_service.reset_processor_periodicity()
+        self._save_app_settings(send_feedback=False)
+        if changes:
+            self.add_log(f"=== {source}による設定変更 ===", "info")
+            for _name, label, old, new in changes:
+                self.add_log(
+                    f"  {label}: {format_setting_value(old)} → {format_setting_value(new)}",
+                    "info",
+                )
+        else:
+            self.add_log(f"{source}: 変更された設定項目はありません", "info")
 
-            # 設定を更新
-            self.app_settings = default_settings
-            self.rule_settings = RuleSettings()
-            self.time_scheduler_settings = TimeSchedulerSettings()
-
-            # UIを更新
-            self._update_rule_settings_ui()
-            self._update_scheduler_settings_ui()
-
-            # 設定を保存
-            self.settings_manager.save(self.app_settings)
-
-            self.add_log("設定をデフォルト値にリセットしました", "info")
-
+    def reset_settings(self):
+        """ルール設定をデフォルト値にリセット（スケジューラ等は Phase 2 で対応）"""
+        if not messagebox.askyesno(
+            "設定のリセット", "ルール設定をすべて初期値に戻します。よろしいですか？"
+        ):
+            return
+        try:
+            self.apply_rule_settings(RuleSettings(), source="リセット")
         except Exception as e:
             logger.error(f"設定リセット中にエラー: {e}", exc_info=True)
             self.add_log(f"設定リセットエラー: {e}", "error")
@@ -811,7 +980,12 @@ class SnoreGuardApp:
         self.periodicity_timer_start_time = res.get("first_event_timestamp")
 
     def add_log(self, message: str, level: str = "info"):
-        """ログ追加"""
+        """ログ追加。GUI のテキストボックスとローテーションログファイルの両方へ。
+
+        ウィジェットが無い（未生成・破棄済み）場合でも記録は残す必要があるため、
+        ファイルログへの転送はウィジェット存在チェックより前に行う。
+        """
+        logger.log(LOG_LEVEL_BY_TAG.get(level, logging.INFO), message)
         try:
             if not self.log_text or not self.log_text.winfo_exists():
                 return
@@ -830,12 +1004,35 @@ class SnoreGuardApp:
         """スレッドセーフなログ追加"""
         ThreadSafeHandler.safe_log(self.root, self.add_log, message, level)
 
+    def _clear_data_queue(self):
+        """データキューをクリア"""
+        logger.debug("データキュークリア開始")
+        cleared_count = 0
+        while not self.data_queue.empty():
+            try:
+                self.data_queue.get_nowait()
+                cleared_count += 1
+            except queue.Empty:
+                break
+        if cleared_count > 0:
+            logger.debug(f"データキューから{cleared_count}個の項目をクリア")
+        logger.debug("データキュークリア完了")
+
     def _on_closing(self):
         """終了処理"""
         logger.debug("アプリケーション終了処理開始")
         if self.is_running:
             logger.debug("検出処理を停止中")
             self._stop_detection()
+
+        # AudioServiceの最終クリーンアップ
+        if hasattr(self, "audio_service") and self.audio_service is not None:
+            logger.debug("AudioServiceの最終クリーンアップ中")
+            self.audio_service._clear_buffers()
+
+        # データキューをクリア
+        self._clear_data_queue()
+
         if self.HAS_OSC:
             logger.debug("VRCハンドラーを停止中")
             self.vrc_handler.stop()
@@ -861,6 +1058,9 @@ class SnoreGuardApp:
         """OSC接続状態UI更新"""
         if self.is_running:
             return
+        if not getattr(self, "receiver_ok", True):
+            # 受信ポートが開けていない間は警告表示を優先する（送信側は独立して成功するため）
+            return
         if is_connected:
             color = "#2ECC71"  # 緑色
             text = "VRChat 接続中"
@@ -881,27 +1081,27 @@ class SnoreGuardApp:
         )
 
     def _update_internal_mute_state(self, is_muted: bool):
-        """内部ミュート状態更新"""
-        if self.is_vrchat_muted != is_muted and self.is_awaiting_mute_sync:
+        """VRChat から受信したミュート状態を内部状態に反映"""
+        if self.is_vrchat_muted is None:
             self.add_log(
-                f"ミュート同期完了: {'ミュート' if is_muted else 'ミュート解除'}",
+                f"VRChatのミュート状態を同期しました: {'ミュート' if is_muted else 'ミュート解除'}",
                 "vrchat",
             )
-            self._cancel_mute_sync_timeout(success=True)
-            if not is_muted:
-                self.add_log("再度ミュート操作を送信します。", "osc")
-                self.root.after(150, self.vrc_handler.toggle_mute)
         self.is_vrchat_muted = is_muted
+        if not is_muted:
+            self.muted_by_snoreguard = False
 
-    def _cancel_mute_sync_timeout(self, success=False):
-        """ミュート同期タイムアウトキャンセル"""
-        if self.sync_timeout_id:
-            self.root.after_cancel(self.sync_timeout_id)
-        self.sync_timeout_id = None
-        if self.is_awaiting_mute_sync:
-            if not success:
-                self.add_log("ミュート同期がタイムアウトしました。", "warning")
-            self.is_awaiting_mute_sync = False
+    def _warn_receiver_unavailable(self):
+        """OSC 受信ポートが開けない＝ミュート状態を追跡できないことを明示"""
+        message = self.vrc_handler.osc_receiver.bind_error or "OSC 受信を開始できません"
+        self.add_log(message, "error")
+        self.add_log(
+            "VRChat のミュート状態を受信できないため、自動ミュートは送信されません。"
+            "VRCFaceTracking など 9001 番ポートを使うアプリを終了して再起動してください。",
+            "warning",
+        )
+        self.status_label.configure(fg_color="#E74C3C")
+        self.status_label_var.set("受信ポート 9001 が使用中")
 
     def _check_for_updates_background(self):
         """バックグラウンドでアップデートを確認する"""
@@ -1112,102 +1312,17 @@ class SnoreGuardApp:
     def _on_calibration_completed(self, calibration_result):
         """キャリブレーション完了時のコールバック"""
         try:
-            # 変更前の設定を保存
-            old_settings = self.rule_settings
-            optimal_settings = calibration_result.optimal_settings
             confidence = calibration_result.confidence_scores.get("total_confidence", 0)
-
-            # 設定を更新
-            self.rule_settings = optimal_settings
-            self.audio_service.rule_settings = optimal_settings
-
-            # UI設定も更新
-            self._apply_settings_to_ui(optimal_settings)
-
-            # 設定を保存
-            self._save_app_settings()
-
-            # 変更内容をログに表示
-            self._log_calibration_changes(old_settings, optimal_settings)
+            self.apply_rule_settings(
+                calibration_result.optimal_settings, source="キャリブレーション"
+            )
             self.add_log(
                 f"キャリブレーション結果を適用しました (信頼度: {confidence:.1%})",
                 "success",
             )
-
         except Exception as e:
             logger.error(f"キャリブレーション結果適用エラー: {e}", exc_info=True)
             self.add_log(f"キャリブレーション結果適用エラー: {e}", "error")
-
-    def _log_calibration_changes(self, old_settings, new_settings):
-        """キャリブレーション変更内容をログに表示"""
-        try:
-            from dataclasses import fields
-
-            self.add_log("=== キャリブレーション結果 ===", "info")
-
-            # 設定項目の日本語名マッピング
-            field_names = {
-                "energy_threshold": "エネルギー閾値",
-                "f0_confidence_threshold": "F0信頼度閾値",
-                "spectral_centroid_threshold": "スペクトル重心閾値",
-                "zcr_threshold": "ZCR閾値",
-                "min_duration_seconds": "最小持続時間",
-                "max_duration_seconds": "最大持続時間",
-                "f0_min_hz": "F0最小値",
-                "f0_max_hz": "F0最大値",
-                "periodicity_event_count": "周期イベント数",
-                "periodicity_window_seconds": "周期ウィンドウ",
-                "min_event_interval_seconds": "最小イベント間隔",
-                "max_event_interval_seconds": "最大イベント間隔",
-            }
-
-            changes_found = False
-
-            for field in fields(old_settings):
-                field_name = field.name
-                old_value = getattr(old_settings, field_name)
-                new_value = getattr(new_settings, field_name)
-
-                # 値が変更された場合のみ表示
-                if abs(old_value - new_value) > 1e-6:  # 浮動小数点数の比較
-                    changes_found = True
-                    display_name = field_names.get(field_name, field_name)
-
-                    # 値の形式を整える
-                    if isinstance(old_value, float):
-                        old_str = f"{old_value:.4f}".rstrip("0").rstrip(".")
-                        new_str = f"{new_value:.4f}".rstrip("0").rstrip(".")
-                    else:
-                        old_str = str(old_value)
-                        new_str = str(new_value)
-
-                    self.add_log(f"  {display_name}: {old_str} → {new_str}", "info")
-
-            if not changes_found:
-                self.add_log("  変更された設定項目はありません", "info")
-
-            self.add_log("========================", "info")
-
-        except Exception as e:
-            logger.error(f"変更内容ログ表示エラー: {e}", exc_info=True)
-
-    def _apply_settings_to_ui(self, settings: RuleSettings):
-        """設定をUIに適用"""
-        try:
-            settings_dict = asdict(settings)
-            for name, value in settings_dict.items():
-                if name in self.rule_setting_vars:
-                    var, label_var, slider = self.rule_setting_vars[name]
-                    var.set(value)
-
-                    # ラベル更新
-                    if isinstance(value, int):
-                        label_var.set(f"{value}")
-                    else:
-                        label_var.set(f"{value:.3f}")
-
-        except Exception as e:
-            logger.error(f"UI設定適用エラー: {e}", exc_info=True)
 
     # ===== VRChat OSC連携機能 =====
 

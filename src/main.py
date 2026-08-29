@@ -1,158 +1,113 @@
 #!/usr/bin/env python3
-import logging
-import customtkinter as ctk
-import time
-from snoreguard.app import SnoreGuardApp
-from snoreguard.quick_splash import QuickSplashScreen
+"""SnoreGuard エントリポイント。"""
 
-logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+import logging
+import sys
+import time
+import traceback
+
+from snoreguard.logging_setup import (
+    install_excepthooks,
+    install_tk_report_callback,
+    setup_logging,
+    show_fatal_error,
 )
+
+LOG_FILE = setup_logging()
+install_excepthooks()
 logger = logging.getLogger(__name__)
+
+import customtkinter as ctk  # noqa: E402 - ログ初期化後に import する
+
+from snoreguard.app import SnoreGuardApp  # noqa: E402
+from snoreguard.quick_splash import QuickSplashScreen  # noqa: E402
 
 
 def prepare_app_data(status_callback):
     """
     アプリケーションの初期化処理を実行
-    - 音声分析エンジンのプリコンパイル
-    - 設定ファイルの読み込み
-    - 時間のかかる初期化処理を段階的に実行
+    - 音声分析エンジンのプリコンパイル（librosa/numba の初回 JIT）
     - スプラッシュ画面に進捗を表示
     """
-    try:
-        # 段階的初期化
-        status_callback("システム初期化中...")
-        time.sleep(0.3)
+    status_callback("システム初期化中...")
+    status_callback("音声エンジン準備中...")
+    from core.rule_processor import RuleBasedProcessor
+    from core.settings import RuleSettings
 
-        status_callback("音声エンジン準備中...")
-        # librosaのプリコンパイルを実行
-        from core.rule_processor import RuleBasedProcessor
-        from core.settings import RuleSettings
-
-        # ダミーのプロセッサーでlibrosaをプリコンパイル
-        temp_settings = RuleSettings()
-        RuleBasedProcessor(temp_settings, lambda: None)
-
-        status_callback("設定読み込み中...")
-        time.sleep(0.3)
-
-        status_callback("最終調整中...")
-        time.sleep(0.2)
-
-        return True
-
-    except Exception as e:
-        logger.error(f"アプリケーション準備エラー: {e}")
-        raise
+    RuleBasedProcessor(RuleSettings(), lambda: None)
+    status_callback("設定読み込み中...")
+    return True
 
 
 def create_and_run_main_app():
-    """
-    メインアプリケーションウィンドウを作成して実行
-    - CustomTkinterを使用してメインウィンドウを作成
-    - SnoreGuardアプリケーションを初期化
-    - UIを表示
-    - ウィンドウの位置やサイズを適切に設定
-    - 確実に前面に表示されるよう制御
-    """
-    try:
-        # 新しいTkインスタンスでメインウィンドウを作成
-        root = ctk.CTk()
-        root.title("SnoreGuard - いびき検出アプリ")
-
-        # ウィンドウの位置を画面中央に設定
-        width = 1000
-        height = 700
-        x = (root.winfo_screenwidth() // 2) - (width // 2)
-        y = (root.winfo_screenheight() // 2) - (height // 2)
-        root.geometry(f"{width}x{height}+{x}+{y}")
-
-        # SnoreGuardAppを初期化
-        SnoreGuardApp(root)
-
-        # ウィンドウを確実に表示
-        root.deiconify()  # 表示
-        root.state("normal")  # 通常状態に
-        root.lift()  # 前面に表示
-        root.focus_force()  # フォーカスを設定
-        root.attributes("-topmost", True)  # 一時的に最前面に
-        root.after(
-            200, lambda: root.attributes("-topmost", False)
-        )  # 200ms後に最前面を解除
-
-        # 確実に表示されるよう少し待つ
-        root.update()
-
-        # メインループ開始
-        root.mainloop()
-
-    except Exception as e:
-        logger.error(f"メインアプリ作成エラー: {e}")
-        raise
+    """メインアプリケーションウィンドウを作成して実行"""
+    root = ctk.CTk()
+    install_tk_report_callback(root)
+    root.title("SnoreGuard - いびき検出アプリ")
+    SnoreGuardApp(root)
+    root.deiconify()
+    root.lift()
+    root.focus_force()
+    root.attributes("-topmost", True)
+    root.after(200, lambda: root.attributes("-topmost", False))
+    root.update()
+    root.mainloop()
 
 
 def main():
     """
-    アプリケーションのメインエントリーポイント。
-    - スプラッシュ画面の表示
-    - バックグラウンドでの初期化処理
+    - スプラッシュ画面の表示とバックグラウンド初期化
     - 初期化完了後にメインアプリケーションウィンドウを表示
+    - 失敗時はログに残し、ダイアログで利用者に知らせる
     """
-    splash = QuickSplashScreen()
+    from snoreguard.single_instance import acquire
 
-    # 初期化完了フラグ
+    if not acquire():
+        show_fatal_error("SnoreGuard は既に起動しています。")
+        return 1
+
+    splash = QuickSplashScreen()
+    install_tk_report_callback(splash.splash_root)
     initialization_complete = False
 
     def end_splash_and_show_main():
-        """スプラッシュ画面を終了してメインアプリ準備"""
-        nonlocal initialization_complete
-        if not initialization_complete:
-            return
-        # スプラッシュのメインループを終了
-        splash.splash_root.quit()
+        if initialization_complete:
+            splash.splash_root.quit()
 
     def on_initialization_complete():
-        """初期化完了時に呼び出されるコールバック関数"""
         nonlocal initialization_complete
         initialization_complete = True
-        # スプラッシュのメインループ内で終了をスケジュール
         splash.splash_root.after(300, end_splash_and_show_main)
 
-    def initialization_task(status_callback):
-        """バックグラウンドで実行される初期化処理"""
-        try:
-            prepare_app_data(status_callback)
-        except Exception as e:
-            logger.error(f"初期化エラー: {e}")
-            raise
-
-    # 初期化完了コールバックを設定
     splash.on_initialization_complete = on_initialization_complete
+    splash.start_initialization(prepare_app_data)
+    splash.run()
 
-    # バックグラウンド初期化を開始
-    splash.start_initialization(initialization_task)
+    if not initialization_complete:
+        message = (
+            "初期化に失敗しました。音声エンジンの準備中にエラーが発生しています。\n"
+            f"ログ: {LOG_FILE}"
+        )
+        logger.error(message)
+        show_fatal_error(message)
+        return 1
 
-    # スプラッシュ画面のメインループ開始
-    try:
-        splash.run()
-    except Exception as e:
-        logger.error(f"スプラッシュエラー: {e}")
-
-    # スプラッシュ終了後、メインアプリを作成・実行
-    if initialization_complete:
-        try:
-            # 適切なclose()メソッドを使用してアニメーションを停止
-            splash.close()
-
-            # 少し待ってからメインアプリを作成
-            time.sleep(0.1)
-
-            create_and_run_main_app()
-        except Exception as e:
-            logger.error(f"メインアプリエラー: {e}")
-    else:
-        logger.error("初期化未完了")
+    splash.close()
+    time.sleep(0.1)
+    create_and_run_main_app()
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        sys.exit(main())
+    except SystemExit:
+        raise
+    except Exception:
+        # 送出し直した例外は sys.excepthook 側で記録される
+        show_fatal_error(
+            "SnoreGuard の起動に失敗しました。\n\n"
+            f"{traceback.format_exc(limit=3)}\n"
+            f"詳細はログを確認してください: {LOG_FILE}"
+        )
+        raise

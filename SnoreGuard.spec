@@ -16,8 +16,8 @@ added_files = [
 ]
 
 a = Analysis(
-    ['src\\main.py'],
-    pathex=[str(project_root)],
+    [str(project_root / 'src' / 'main.py')],
+    pathex=[str(project_root / 'src')],
     binaries=[],
     datas=added_files,
     hiddenimports=[
@@ -49,7 +49,7 @@ exe = EXE(
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=True,
+    upx=False,
     upx_exclude=[],
     runtime_tmpdir=None,
     console=False,  # ウィンドウアプリケーションなのでFalse
