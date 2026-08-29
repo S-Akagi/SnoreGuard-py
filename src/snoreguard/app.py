@@ -100,6 +100,7 @@ class SnoreGuardApp:
         self._restart_attempt = 0  # 音声ストリーム異常終了後の再開試行回数
         self._restart_after_id = None
         self._last_sound_time = None  # 無音ウォッチドッグ用
+        self._last_analysis_time = None  # 解析結果の途絶を検知するウォッチドッグ用
         self._silence_warned = False
 
         # 設定マネージャー初期化
@@ -318,6 +319,7 @@ class SnoreGuardApp:
         """初期化完了後のUI状態更新とビジュアル開始"""
         self._restart_attempt = 0
         self._last_sound_time = datetime.now()
+        self._last_analysis_time = self._last_sound_time
         self._silence_warned = False
         self.is_running = True
         self.is_initializing = False
@@ -507,6 +509,8 @@ class SnoreGuardApp:
         if not self.is_running:
             logger.debug("ビジュアル更新をスキップ: 検出停止中")
             return
+        # 解析結果が届かなくなる障害も拾うため、キューではなくタイマーで監視する
+        self._check_silence()
         try:
             # イベント検出後の周期性タイマー処理
             if self.periodicity_timer_start_time:
@@ -574,28 +578,54 @@ class SnoreGuardApp:
         except (AttributeError, NameError):
             pass
         self._update_detailed_status(res)
-        self._check_silence(res)
+        self._note_analysis_result(res)
 
-    def _check_silence(self, res: dict):
-        """一定時間 RMS がゼロなら、マイクが無音であることを知らせる"""
+    def _note_analysis_result(self, res: dict):
+        """解析結果の到着時刻と、音が鳴っていた時刻を記録するだけ。
+
+        警告の判断はここでは行わない。解析結果が 1 件も届かなくなる障害
+        （ストリームのハングなど）を検知するため、判断は UI タイマー駆動の
+        _check_silence() 側に置いている。
+        """
+        now = datetime.now()
+        self._last_analysis_time = now
         results = res.get("analysis_results") or {}
         rms = results.get("rms")
-        now = datetime.now()
         if rms is not None and len(rms) > 0 and float(np.max(rms)) > 1e-6:
             self._last_sound_time = now
+
+    def _check_silence(self):
+        """マイクの無音、または解析結果の途絶を一定時間で知らせる。
+
+        キュー到着ではなく UI タイマー（_update_visuals）から呼ぶ。
+        キュー駆動だと「データがまったく来ない」というウォッチドッグ本来の
+        対象を検知できないため。
+        """
+        now = datetime.now()
+        if self._last_sound_time is None:
+            self._last_sound_time = now
+        if self._last_analysis_time is None:
+            self._last_analysis_time = now
+        silent_seconds = (now - self._last_sound_time).total_seconds()
+        stalled_seconds = (now - self._last_analysis_time).total_seconds()
+
+        if max(silent_seconds, stalled_seconds) <= self.SILENCE_WARN_AFTER_S:
             if self._silence_warned:
                 self._silence_warned = False
                 self.add_log("音声入力を再び検知しました。", "system")
             return
-        if self._last_sound_time is None:
-            self._last_sound_time = now
+
+        if self._silence_warned:
             return
-        if (
-            not self._silence_warned
-            and (now - self._last_sound_time).total_seconds()
-            > self.SILENCE_WARN_AFTER_S
-        ):
-            self._silence_warned = True
+        self._silence_warned = True
+        if stalled_seconds > self.SILENCE_WARN_AFTER_S:
+            self.add_log(
+                "60秒以上、音声の解析結果が届いていません。"
+                "マイクが切断された可能性があります。一度停止して再開してください。",
+                "warning",
+            )
+            self.status_label_var.set("⚠ 解析が停止しています")
+        else:
             self.add_log(
                 "60秒以上無音です。マイクの接続と Windows のマイクのプライバシー設定を確認してください。",
                 "warning",
